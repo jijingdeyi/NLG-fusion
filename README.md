@@ -39,8 +39,12 @@ python scripts/pred.py --data $DATA --ckpt $CHECKPOINT_PATH --dst $result_path
 
 `$result_path`: path of your fusion result
 
-## training details
+## Experiment details
 When we train on LLVIP dataset, the text for task is "This is an infrared and visible image fusion task.", the text for visible images is "low light degradation" and the text for infrared images is "low contrast and blurred"; when we predict on LLVIP and MSRS dataset, the text for task is "This is an infrared and visible image fusion task.", the text for visible images is "maybe low light degradation and overexposure degradation in visible images." and the text for infrared images is "low contrast issues"  ratio 0.6 0.2 0.2
 
 when we predict on RoadScene dataset, the text for task is "This is an infrared and visible image fusion task. Should preserve more visible image information", the text for visible images is "The brightness is too high, and some scene lights are too bright; it has less noise" and the text for infrared images is "low contrast issues"  ratio 0.6 0.3 0.1
+
+## Metric
+The python code for calculating various metrics in our paper can refer to :
+https://blog.csdn.net/fovever_/article/details/129332278?spm=1001.2014.3001.5501
 
