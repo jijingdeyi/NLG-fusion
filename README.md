@@ -1,6 +1,6 @@
 # Text-guided infrared and visible image fusion
 
-This is the official implementation of our paper "".
+This is the implementation code of our paper "".
 
 To begin with, you need to create your own virtual environment. We provide our environment configuration in `environment.yml`. You just need to activate your environment and run
 ```shell
