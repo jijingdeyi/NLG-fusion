@@ -2,9 +2,13 @@
 
 This is the official implementation of our paper "".
 
-TO begin with, you need to create your own virtual environment. We provide our environment in `requirements.txt`. You just need to activate your environment and run
+TO begin with, you need to create your own virtual environment. We provide our environment in `environment.yml`. You just need to activate your environment and run
 ```shell
-pip install -r requirements.txt
+conda env create -f environment.yml
+```
+and then activate the new virtual environment:
+```shell
+conda activate reconet
 ```
 
 ## For testing
