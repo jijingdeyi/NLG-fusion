@@ -14,7 +14,7 @@ conda activate reconet
 ## For testing
 We provide our test datasets in `../data`, which includes four test sets from four public infrared and visible image fusion datasets. 
 
-Pretrained parameters are provided in https://drive.google.com/drive/folders/10z5WKA-iJFtix_4hBMfkhdROyjZAtasW?usp=drive_link
+Pretrained parameters are provided in [Google drive](https://drive.google.com/drive/folders/10z5WKA-iJFtix_4hBMfkhdROyjZAtasW?usp=drive_link)
 
 If you just want to test the performance of our model, you just need to run:
 
@@ -53,6 +53,5 @@ When we train on LLVIP dataset, the text for task is "This is an infrared and vi
 when we predict on RoadScene dataset, the text for task is "This is an infrared and visible image fusion task. Should preserve more visible image information", the text for visible images is "The brightness is too high, and some scene lights are too bright; it has less noise" and the text for infrared images is "low contrast issues"  ratio 0.6 0.3 0.1
 
 ## Metric
-The python code for calculating various metrics in our paper can refer to :
-https://blog.csdn.net/fovever_/article/details/129332278?spm=1001.2014.3001.5501
+The python code for calculating various metrics in our paper can refer to : [CSDN blog](https://blog.csdn.net/fovever_/article/details/129332278?spm=1001.2014.3001.5501)
 
