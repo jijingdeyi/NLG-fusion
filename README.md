@@ -2,7 +2,7 @@
 
 This is the official implementation of our paper "".
 
-TO begin with, you need to create your own virtual environment. We provide our environment in `environment.yml`. You just need to activate your environment and run
+To begin with, you need to create your own virtual environment. We provide our environment configuration in `environment.yml`. You just need to activate your environment and run
 ```shell
 conda env create -f environment.yml
 ```
