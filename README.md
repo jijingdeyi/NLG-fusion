@@ -12,12 +12,16 @@ conda activate reconet
 ```
 
 ## For testing
-We provide our test datasets in `../data`, which includes three test sets from three public infrared and visible image fusion datasets. If you just want to test the performance of our model,  pretrained parameters are provided in `../checkpoint/622.ckpt`, you just need to run:
+We provide our test datasets in `../data`, which includes four test sets from four public infrared and visible image fusion datasets. 
+
+Pretrained parameters are provided in https://drive.google.com/drive/folders/10z5WKA-iJFtix_4hBMfkhdROyjZAtasW?usp=drive_link
+
+If you just want to test the performance of our model, you just need to run:
 
 ```shell
 # set project path for python
 export PYTHONPATH="${PYTHONPATH}:$ROOT"
-python scripts/test.py --data $your_data_path (e.g.  data/TNO_test) --ckpt checkpoint/622.ckpt --dst $your_save_path
+python scripts/test.py --data $your_data_path (e.g.  data/TNO_test) --ckpt checkpoint/train_llvip_622.ckpt --dst $your_save_path
 ```
 `$ROOT`: your project root
 
