@@ -1,55 +1,38 @@
-# A natural language guided, interactive neural network model for infrared and visible image fusion
+# NLG-fusion / DTRC
 
-To begin with, you need to create your own virtual environment. We provide our environment configuration in `environment.yml`. You just need to activate your environment and run
-```shell
-conda env create -f environment.yml
-```
-and then activate the new virtual environment:
-```shell
-conda activate reconet
-```
+红外–可见光融合：**轻量 backbone** + 可选前置校正 **`dtrc/`**。
 
-## For testing
-We provide our test datasets in `../data`, which includes four test sets from four public infrared and visible image fusion datasets. 
+## 训练 backbone
 
-Pretrained parameters are provided in [Google drive](https://drive.google.com/drive/folders/10z5WKA-iJFtix_4hBMfkhdROyjZAtasW?usp=drive_link)
-
-If you just want to test the performance of our model, you just need to run:
-
-```shell
-# set project path for python
-export PYTHONPATH="${PYTHONPATH}:$ROOT"
-python scripts/test.py --data $your_data_path (e.g.  data/TNO_test) --ckpt checkpoint/train_llvip_622.ckpt --dst $your_save_path
-```
-`$ROOT`: your project root
-
-`$your_data_path`: path of your testing data 
-
-`$your_save_path`: path of your fusion result 
-
-Then you can obtain the fusion result which we already put in `../result`. 
-
-## For training
-If you want to train the model yourself:
-
-```shell
-# set project path for python
-export PYTHONPATH="${PYTHONPATH}:$ROOT"
-python scripts/train.py --data $DATA --ckpt $CHECKPOINT_PATH --lr 1e-3
-python scripts/pred.py --data $DATA --ckpt $CHECKPOINT_PATH --dst $result_path
+```bash
+python scripts/train.py --data /data/ykx/LLVIP/train
 ```
 
-`$DATA`: path of your training or testing dataset
+合成：\(u=\mathrm{clip}(m+s_r R)\)。  
+- \(m=(1-\alpha)\max+\alpha\max_{\mathrm{hf}}\)，默认 \(\alpha=0.3\)（`--prior_hf_alpha`）  
+- decoder：只吃 \([B_{\mathrm{ir}};B_{\mathrm{vi}}]\)，不吃 \(m\)  
+- 损失：默认 `0.5 L_int(max) + 0.5 L_tex`（`--f_weight`）
 
-`$CHECKPOINT_PATH`: path of your checkpoint files
+## 扫先验 α 与损失比（推荐先跑）
 
-`$result_path`: path of your fusion result
+```bash
+python scripts/sweep_prior_loss.py --data /data/ykx/LLVIP/train
+```
 
-## Experiment details
-When we train on LLVIP dataset, the text for task is "This is an infrared and visible image fusion task.", the text for visible images is "low light degradation" and the text for infrared images is "low contrast and blurred"; when we predict on LLVIP and MSRS dataset, the text for task is "This is an infrared and visible image fusion task.", the text for visible images is "maybe low light degradation and overexposure degradation in visible images." and the text for infrared images is "low contrast issues"  ratio 0.6 0.2 0.2
+1. 零训练：直接评先验 \(u=m\)，扫 α  
+2. 短训：固定最优 α，扫 int/tex  
+结果在 `logs/sweeps/prior_loss_*`，结尾会打印建议的全量训练命令。
 
-when we predict on RoadScene dataset, the text for task is "This is an infrared and visible image fusion task. Should preserve more visible image information", the text for visible images is "The brightness is too high, and some scene lights are too bright; it has less noise" and the text for infrared images is "low contrast issues"  ratio 0.6 0.3 0.1
+## 推理
 
-## Metric
-The python code for calculating various metrics in our paper can refer to : [CSDN blog](https://blog.csdn.net/fovever_/article/details/129332278?spm=1001.2014.3001.5501)
+```bash
+python scripts/pred.py --ckpt checkpoint/<run>/<best>.ckpt --data ... --dst ...
+```
 
+## DTRC
+
+```bash
+python scripts/train_dtrc_stage2.py --data /data/ykx/LLVIP/train --backbone_ckpt <ckpt>
+```
+
+详见 `experiments.md` §11。

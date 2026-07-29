@@ -1,0 +1,86 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Secrets / local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+credentials*
+*credential*
+*secret*
+
+# Virtual env / conda
+.venv/
+venv/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Weights & run artifacts (often contain local data paths)
+checkpoint/
+*.ckpt
+*.ckpt.*
+*.pt
+*.pth
+*.onnx
+*.safetensors
+
+# Logs / experiment outputs
+logs/
+lightning_logs/
+tensorboard/
+result/
+runs/
+wandb/
+outputs/
+tb_logs/
+
+# Large / local datasets (keep outside git)
+data/
+/data/
+
+# Compiled / exported papers (keep .tex if needed)
+*.pdf
+paper/
+original.pdf
+sn-article.pdf
+paper/**/*.pdf
+paper/**/*.aux
+paper/**/*.log
+paper/**/*.out
+paper/**/*.synctex.gz
+paper/**/*.bbl
+paper/**/*.blg
+
+# Local notes / draft docs (keep README.md)
+experiments.md
+score.md
+
+# Misc local dumps
+*.npy
+*.npz
+*.h5
+*.hdf5
+*.zip
+*.tar
+*.tar.gz
+*.7z
