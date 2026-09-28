@@ -2,6 +2,7 @@
 
 DEFAULT_F_WEIGHT = (0.5, 0.0, 0.5)
 DEFAULT_PRIOR_HF_ALPHA = 0.3  # m = (1-α)·max + α·max_hf
+DEFAULT_SCORE_RECIPE = 'A'  # see ldt.fusion_metrics.SCORE_RECIPES
 DEFAULT_LR = 1e-3
 DEFAULT_DIM = 64
 DEFAULT_MAX_EPOCHS = 200

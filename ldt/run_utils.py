@@ -16,6 +16,7 @@ from ldt.defaults import (
     DEFAULT_LR,
     DEFAULT_LR_SCHED_PATIENCE,
     DEFAULT_PRIOR_HF_ALPHA,
+    DEFAULT_SCORE_RECIPE,
 )
 
 
@@ -73,6 +74,9 @@ def merge_inference_args_from_checkpoint(ckpt_path: str | Path, cli: Namespace) 
     args.f_weight = list(_get('f_weight', getattr(cli, 'f_weight', list(DEFAULT_F_WEIGHT))))
     args.prior_hf_alpha = float(
         _get('prior_hf_alpha', getattr(cli, 'prior_hf_alpha', DEFAULT_PRIOR_HF_ALPHA)),
+    )
+    args.score_recipe = str(
+        _get('score_recipe', getattr(cli, 'score_recipe', DEFAULT_SCORE_RECIPE)),
     )
     args.lr_sched_patience = int(
         _get('lr_sched_patience', getattr(cli, 'lr_sched_patience', DEFAULT_LR_SCHED_PATIENCE)),

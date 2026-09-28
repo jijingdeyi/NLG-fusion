@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Sweep prior HF blend α (no train) then int/tex weights (short train).
+"""Sweep teacher backbone prior α then int/tex weights using max-min val/score.
 
 Usage:
   python scripts/sweep_prior_loss.py --data /data/ykx/LLVIP/train
 
 Grids are fixed in this file on purpose — no mode switches.
+Selection criterion: COMPETITIVE max-min ``val/score`` (see ldt/fusion_metrics.py).
 """
 
 from __future__ import annotations
@@ -31,62 +32,31 @@ from ldt.defaults import (
     DEFAULT_DIM,
     DEFAULT_LR,
     DEFAULT_LR_SCHED_PATIENCE,
+    DEFAULT_SCORE_RECIPE,
     DEFAULT_VAL_SAMPLES,
 )
-from ldt.fusion_metrics import VAL_METRIC_RANGES, compute_fusion_metrics
+from ldt.fusion_metrics import (
+    ALL_METRIC_KEYS,
+    COMPETITIVE_RANGES,
+    SCORE_RECIPES,
+    score_from_metrics,
+    compute_fusion_metrics,
+)
 from ldt.fusion_prior import build_fusion_prior
 from ldt.ldt_fusion import LDTFusion
-
-
-def _norm_metric(name: str, value: float) -> float:
-    lo, hi = VAL_METRIC_RANGES[name]
-    if hi <= lo:
-        return 0.0
-    return float(max(0.0, min(1.0, (value - lo) / (hi - lo))))
-
-
-def balance_mi_qabf(mi: float, qabf: float) -> float:
-    """Prefer neither pure-max (α=0) nor pure-HF; used only to pick α for phase 2."""
-    return 0.5 * (_norm_metric('mi', mi) + _norm_metric('qabf', qabf))
-
-
-def pick_alpha(rows: list[dict]) -> dict:
-    """Pick α for phase-2 from the MI–Qabf Pareto compromise.
-
-    Pure ``α=0`` (classical max) usually wins raw ``score`` via MI; it is kept in
-    the table for reference but excluded from auto-pick so phase-2 actually tests
-    a textured residual base.
-    """
-    candidates = [r for r in rows if r['alpha'] > 0.0]
-    if not candidates:
-        candidates = rows
-    mi_lo = min(r['mi'] for r in candidates)
-    mi_hi = max(r['mi'] for r in candidates)
-    q_lo = min(r['qabf'] for r in candidates)
-    q_hi = max(r['qabf'] for r in candidates)
-
-    def utopia(r: dict) -> float:
-        nm = (r['mi'] - mi_lo) / (mi_hi - mi_lo + 1e-8)
-        nq = (r['qabf'] - q_lo) / (q_hi - q_lo + 1e-8)
-        return ((1.0 - nm) ** 2 + (1.0 - nq) ** 2) ** 0.5
-
-    for r in candidates:
-        r['utopia'] = utopia(r)
-        r['balance'] = balance_mi_qabf(r['mi'], r['qabf'])
-    return min(candidates, key=lambda r: r['utopia'])
 
 # Fixed grids — edit here if you need different points.
 ALPHA_GRID = (0.0, 0.2, 0.3, 0.5, 0.7, 1.0)
 TEX_GRID = (0.3, 0.4, 0.5, 0.6, 0.7)  # int_w = 1 - tex_w, ssim = 0
 SHORT_EPOCHS = 8
 SHORT_PATIENCE = 3
-# Cap train work so phase-2 stays a screen of hours, not a full LLVIP epoch × 5.
 LIMIT_TRAIN_BATCHES = 200
 LIMIT_VAL_BATCHES = 0  # 0 = full val loader
 
 
-def _metrics_batch(ir: torch.Tensor, vi: torch.Tensor, fused: torch.Tensor) -> dict[str, float]:
-    totals = {k: 0.0 for k in ('mi', 'qabf', 'scd', 'vif', 'ssim', 'score')}
+def _raw_metrics_batch(ir: torch.Tensor, vi: torch.Tensor, fused: torch.Tensor) -> dict[str, float]:
+    """Average raw metrics only (no per-image score)."""
+    totals = {k: 0.0 for k in ALL_METRIC_KEYS}
     n = ir.shape[0]
     for i in range(n):
         ir_np = (ir[i, 0].detach().cpu().numpy() * 255.0).astype('float32')
@@ -99,27 +69,43 @@ def _metrics_batch(ir: torch.Tensor, vi: torch.Tensor, fused: torch.Tensor) -> d
 
 
 @torch.no_grad()
-def eval_prior_alpha(loader: DataLoader, alpha: float, device: torch.device) -> dict[str, float]:
-    acc = {k: 0.0 for k in ('mi', 'qabf', 'scd', 'vif', 'ssim', 'score')}
+def eval_prior_alpha(
+    loader: DataLoader, alpha: float, device: torch.device, recipe: str,
+) -> dict[str, float]:
+    acc = {k: 0.0 for k in ALL_METRIC_KEYS}
     count = 0
     for batch in loader:
         ir = batch['ir'].to(device)
         vi = batch['vi'].to(device)
         prior = build_fusion_prior(ir, vi, hf_alpha=alpha)
-        m = _metrics_batch(ir, vi, prior)
+        m = _raw_metrics_batch(ir, vi, prior)
         b = ir.shape[0]
         for k in acc:
             acc[k] += m[k] * b
         count += b
-    return {k: acc[k] / max(count, 1) for k in acc}
+    means = {k: acc[k] / max(count, 1) for k in acc}
+    score, details = score_from_metrics(means, recipe=recipe)
+    return {
+        **means,
+        'score': score,
+        'worst_metric': str(details['worst_metric']),
+        'worst_attainment': float(details['worst_attainment']),
+    }
 
 
 def _print_table(title: str, rows: list[dict], keys: list[str]) -> None:
     print(f'\n=== {title} ===')
-    header = '  '.join(f'{k:>8}' for k in keys)
+    header = '  '.join(f'{k:>10}' for k in keys)
     print(header)
     for row in rows:
-        print('  '.join(f'{row[k]:8.4f}' if isinstance(row[k], float) else f'{row[k]:>8}' for k in keys))
+        cells = []
+        for k in keys:
+            v = row[k]
+            if isinstance(v, float):
+                cells.append(f'{v:10.4f}')
+            else:
+                cells.append(f'{str(v):>10}')
+        print('  '.join(cells))
 
 
 def _write_csv(path: Path, rows: list[dict]) -> None:
@@ -132,32 +118,29 @@ def _write_csv(path: Path, rows: list[dict]) -> None:
         writer.writerows(rows)
 
 
-def phase1_prior(loader: DataLoader, device: torch.device, out_dir: Path) -> float:
+def phase1_prior(loader: DataLoader, device: torch.device, out_dir: Path, recipe: str) -> float:
     rows = []
     for alpha in ALPHA_GRID:
-        m = eval_prior_alpha(loader, alpha, device)
+        m = eval_prior_alpha(loader, alpha, device, recipe=recipe)
         row = {'alpha': alpha, **m}
         rows.append(row)
         print(
             f'[prior] α={alpha:.1f}  score={m["score"]:.4f}  '
+            f'worst={m["worst_metric"]}({m["worst_attainment"]:+.3f})  '
             f'mi={m["mi"]:.3f}  qabf={m["qabf"]:.3f}',
         )
 
-    best = pick_alpha(rows)
-    for r in rows:
-        r.setdefault('balance', balance_mi_qabf(r['mi'], r['qabf']))
-        r.setdefault('utopia', float('nan'))
-
     _print_table(
-        'Phase-1 prior only (u=m, no train)',
+        f'Phase-1 prior only (u=m) — recipe={recipe} keys={SCORE_RECIPES[recipe]}',
         rows,
-        ['alpha', 'utopia', 'score', 'mi', 'qabf', 'vif', 'ssim'],
+        ['alpha', 'score', 'worst_metric', 'mi', 'qabf', 'scd', 'vif', 'ssim', 'sf'],
     )
     _write_csv(out_dir / 'phase1_prior.csv', rows)
 
+    best = max(rows, key=lambda r: r['score'])
     print(
-        f'\n[prior] pick α={best["alpha"]:.1f} by utopia distance={best["utopia"]:.4f} '
-        f'(α=0 excluded from auto-pick; see table for full Pareto)',
+        f'\n[prior] pick α={best["alpha"]:.1f} by max-min score={best["score"]:.4f} '
+        f'(worst={best["worst_metric"]}, recipe={recipe})',
     )
     return float(best['alpha'])
 
@@ -181,9 +164,13 @@ def phase2_weights(
             lr=DEFAULT_LR,
             f_weight=[int_w, 0.0, tex_w],
             prior_hf_alpha=alpha,
+            score_recipe=args.score_recipe,
             lr_sched_patience=DEFAULT_LR_SCHED_PATIENCE,
         )
-        print(f'\n[short] α={alpha:.1f}  f_weight=({int_w:.1f}, 0, {tex_w:.1f})  epochs={args.epochs}')
+        print(
+            f'\n[short] α={alpha:.1f}  f_weight=({int_w:.1f}, 0, {tex_w:.1f})  '
+            f'recipe={args.score_recipe}  epochs={args.epochs}',
+        )
         pl.seed_everything(args.seed)
         model = LDTFusion(ns)
         ckpt_cb = ModelCheckpoint(
@@ -213,43 +200,51 @@ def phase2_weights(
         )
         trainer.fit(model, train_loader, val_loader)
         metrics = {k: float(v) for k, v in trainer.callback_metrics.items() if k.startswith('val/')}
+        means = {k: metrics.get(f'val/{k}', float('nan')) for k in ALL_METRIC_KEYS}
+        score = metrics.get('val/score', float('nan'))
+        if score != score:
+            score, details = score_from_metrics(means, recipe=args.score_recipe)
+        else:
+            _, details = score_from_metrics(means, recipe=args.score_recipe)
         row = {
             'alpha': alpha,
             'int_w': int_w,
             'tex_w': tex_w,
-            'score': metrics.get('val/score', float('nan')),
-            'mi': metrics.get('val/mi', float('nan')),
-            'qabf': metrics.get('val/qabf', float('nan')),
-            'vif': metrics.get('val/vif', float('nan')),
-            'ssim': metrics.get('val/ssim', float('nan')),
+            'score': score,
+            **means,
+            'worst_metric': details['worst_metric'],
+            'worst_attainment': details['worst_attainment'],
             'best_ckpt': str(ckpt_cb.best_model_path or ''),
         }
         rows.append(row)
         print(
-            f'[short] done  score={row["score"]:.4f}  mi={row["mi"]:.3f}  qabf={row["qabf"]:.3f}',
+            f'[short] done  score={row["score"]:.4f}  '
+            f'worst={row["worst_metric"]}  mi={row["mi"]:.3f}  qabf={row["qabf"]:.3f}',
         )
 
     _print_table(
-        f'Phase-2 short train (α={alpha:.1f} fixed)',
+        f'Phase-2 short train (α={alpha:.1f}, recipe={args.score_recipe})',
         rows,
-        ['int_w', 'tex_w', 'score', 'mi', 'qabf', 'vif'],
+        ['int_w', 'tex_w', 'score', 'worst_metric', 'mi', 'qabf', 'sf', 'vif'],
     )
     _write_csv(out_dir / 'phase2_weights.csv', rows)
     best = max(rows, key=lambda r: r['score'] if r['score'] == r['score'] else -1.0)
     print(
         f'\n[recommend] prior_hf_alpha={best["alpha"]:.1f}  '
         f'f_weight {best["int_w"]:.1f} 0 {best["tex_w"]:.1f}  '
-        f'(short-train score={best["score"]:.4f})',
+        f'score_recipe={args.score_recipe}  '
+        f'(short-train score={best["score"]:.4f}, worst={best["worst_metric"]})',
     )
     print(
         f'  full train: python scripts/train.py --data {args.data} '
         f'--prior_hf_alpha {best["alpha"]:.1f} '
-        f'--f_weight {best["int_w"]:.1f} 0 {best["tex_w"]:.1f}',
+        f'--f_weight {best["int_w"]:.1f} 0 {best["tex_w"]:.1f} '
+        f'--score_recipe {args.score_recipe}',
     )
 
 
 def main():
-    parser = ArgumentParser(description='Sweep prior α then int/tex weights.')
+    parser = ArgumentParser(description='Sweep teacher prior α / loss weights via max-min score.')
     parser.add_argument('--data', type=str, default='/data/ykx/LLVIP/train')
     parser.add_argument('--log_dir', type=str, default='logs')
     parser.add_argument('--bs', type=int, default=16)
@@ -259,6 +254,11 @@ def main():
     parser.add_argument('--epochs', type=int, default=SHORT_EPOCHS, help='Short-train epochs (phase 2)')
     parser.add_argument('--seed', type=int, default=443)
     parser.add_argument('--no_cuda', action='store_true')
+    parser.add_argument(
+        '--score_recipe', type=str, default=DEFAULT_SCORE_RECIPE,
+        choices=sorted(SCORE_RECIPES),
+        help='Max-min score recipe A–F',
+    )
     args = parser.parse_args()
 
     logging.getLogger('pytorch_lightning').setLevel(logging.WARNING)
@@ -270,6 +270,11 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f'[sweep] results -> {out_dir.resolve()}')
     print(f'[sweep] device={device}  val_samples={args.val_samples}')
+    print(f'[sweep] score_recipe={args.score_recipe}  keys={SCORE_RECIPES[args.score_recipe]}')
+    print('[sweep] COMPETITIVE_RANGES (LLVIP median→max):')
+    for k in SCORE_RECIPES[args.score_recipe]:
+        lo, hi = COMPETITIVE_RANGES[k]
+        print(f'         {k}: floor={lo:.4f}  target={hi:.4f}')
 
     train_loader = DataLoader(
         IVIFDataset(
@@ -288,7 +293,7 @@ def main():
         collate_fn=IVIFDataset.collate_fn, num_workers=4, pin_memory=device.type == 'cuda',
     )
 
-    alpha = phase1_prior(val_loader, device, out_dir)
+    alpha = phase1_prior(val_loader, device, out_dir, recipe=args.score_recipe)
     phase2_weights(alpha, args, train_loader, val_loader, out_dir)
 
 

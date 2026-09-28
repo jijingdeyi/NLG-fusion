@@ -1,0 +1,47 @@
+{
+  "all": {
+    "n": 239,
+    "decisive": 209,
+    "ours_soft": 0.787,
+    "ours_dec": 0.813,
+    "baselines": {
+      "en": 0.713,
+      "mi": 0.579,
+      "qabf": 0.694,
+      "scd": 0.636,
+      "vif": 0.675,
+      "ssim": 0.684,
+      "sf": 0.684
+    }
+  },
+  "natural": {
+    "n": 137,
+    "decisive": 113,
+    "ours_soft": 0.788,
+    "ours_dec": 0.796,
+    "baselines": {
+      "en": 0.735,
+      "mi": 0.46,
+      "qabf": 0.655,
+      "scd": 0.655,
+      "vif": 0.655,
+      "ssim": 0.619,
+      "sf": 0.743
+    }
+  },
+  "public": {
+    "n": 52,
+    "decisive": 44,
+    "ours_soft": 0.75,
+    "ours_dec": 0.773,
+    "baselines": {
+      "en": 0.636,
+      "mi": 0.614,
+      "qabf": 0.705,
+      "scd": 0.591,
+      "vif": 0.682,
+      "ssim": 0.636,
+      "sf": 0.614
+    }
+  }
+}

@@ -18,8 +18,15 @@ from ldt.defaults import (
     DEFAULT_LR,
     DEFAULT_LR_SCHED_PATIENCE,
     DEFAULT_PRIOR_HF_ALPHA,
+    DEFAULT_SCORE_RECIPE,
 )
-from ldt.fusion_metrics import composite_validation_score, compute_fusion_metrics
+from ldt.fusion_metrics import (
+    ALL_METRIC_KEYS,
+    SCORE_RECIPES,
+    resolve_score_config,
+    score_from_metrics,
+    compute_fusion_metrics,
+)
 from modules.fuser import Fuser
 
 
@@ -46,6 +53,8 @@ class LDTFusion(pl.LightningModule):
         self.f_weight = list(args.f_weight)
         self.lr_sched_patience = args.lr_sched_patience
         self.prior_hf_alpha = float(getattr(args, 'prior_hf_alpha', DEFAULT_PRIOR_HF_ALPHA))
+        self.score_recipe = str(getattr(args, 'score_recipe', DEFAULT_SCORE_RECIPE))
+        self.score_metric_keys, self.score_ranges = resolve_score_config(recipe=self.score_recipe)
         self.fuser = Fuser(dim=self.dim, use_bn=False, hf_alpha=self.prior_hf_alpha)
         self.grad_loss = GradLoss()
 
@@ -84,12 +93,16 @@ class LDTFusion(pl.LightningModule):
         if not torch.isfinite(f).all():
             f = torch.nan_to_num(f, nan=0.0, posinf=1.0, neginf=0.0).clamp(0, 1)
 
-        totals = {'mi': 0.0, 'qabf': 0.0, 'scd': 0.0, 'vif': 0.0, 'ssim': 0.0}
+        totals = {k: 0.0 for k in ALL_METRIC_KEYS}
         for i in range(x.shape[0]):
             ir_np = (x[i, 0].detach().cpu().numpy() * 255.0).astype('float32')
             vi_np = (y[i, 0].detach().cpu().numpy() * 255.0).astype('float32')
             f_np = (f[i, 0].detach().cpu().numpy() * 255.0).astype('float32')
-            metrics = compute_fusion_metrics(ir_np, vi_np, f_np)
+            metrics = compute_fusion_metrics(
+                ir_np, vi_np, f_np,
+                recipe=self.score_recipe,
+                ranges=self.score_ranges,
+            )
             for key in totals:
                 totals[key] += metrics[key]
 
@@ -110,18 +123,30 @@ class LDTFusion(pl.LightningModule):
 
     def on_validation_epoch_end(self):
         metrics = self.trainer.callback_metrics
-        required = ('val/mi', 'val/qabf', 'val/scd', 'val/vif', 'val/ssim')
-        if not all(k in metrics for k in required):
+        means = {}
+        for key in self.score_metric_keys:
+            tag = f'val/{key}'
+            if tag not in metrics:
+                self.log('val/score', 0.0, prog_bar=True, on_epoch=True, sync_dist=True)
+                return
+            means[key] = float(metrics[tag])
+        if not all(math.isfinite(v) for v in means.values()):
             self.log('val/score', 0.0, prog_bar=True, on_epoch=True, sync_dist=True)
             return
-        values = [float(metrics[k]) for k in required]
-        if not all(math.isfinite(v) for v in values):
-            self.log('val/score', 0.0, prog_bar=True, on_epoch=True, sync_dist=True)
-            return
-        score = composite_validation_score(*values)
+        score, details = score_from_metrics(
+            means,
+            metric_keys=self.score_metric_keys,
+            ranges=self.score_ranges,
+        )
         if not math.isfinite(score):
             score = 0.0
         self.log('val/score', score, prog_bar=True, on_epoch=True, sync_dist=True)
+        # log bottleneck identity as a categorical proxy (hash not needed; string via text is hard in PL)
+        # keep worst attainment for TB scalars
+        self.log(
+            'val/worst_attainment', float(details['worst_attainment']),
+            on_epoch=True, sync_dist=True,
+        )
 
     def predict_step(self, batch, batch_idx, dataloader_idx=0):
         return batch['name'], self.f_forward(batch['ir'], batch['vi'])
@@ -152,6 +177,11 @@ class LDTFusion(pl.LightningModule):
         parser.add_argument(
             '--prior_hf_alpha', type=float, default=DEFAULT_PRIOR_HF_ALPHA,
             help='Prior blend: m=(1-α)·max + α·max_hf',
+        )
+        parser.add_argument(
+            '--score_recipe', type=str, default=DEFAULT_SCORE_RECIPE,
+            choices=sorted(SCORE_RECIPES),
+            help='Max-min val/score metric set (A–F); see score.md §10.8',
         )
         parser.add_argument('--lr_sched_patience', type=int, default=DEFAULT_LR_SCHED_PATIENCE)
         return parent
