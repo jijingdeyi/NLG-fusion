@@ -2,7 +2,7 @@
 """Export pair-level supervision (y, R) from labels_*.jsonl (score.md §3.1.4–3.1.5).
 
   python scripts/pref_bench/aggregate_preferences.py \\
-      --config /data/ykx/pref_bench/config.yaml
+      --config /path/to/pref_bench/config.yaml
 """
 
 from __future__ import annotations

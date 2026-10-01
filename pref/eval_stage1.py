@@ -21,6 +21,7 @@ import torch
 from torch.utils.data import DataLoader
 
 from pref.dataset import PreferencePairDataset
+from pref.io import resolve_pack_paths
 from pref.model.loss import soft_preference_target
 from pref.model.resnet_scorer import ResNet18ScalarScorer
 
@@ -325,15 +326,31 @@ def run_stage1_eval(
     out = Path(out_root)
     fit = out / 'fit'
     ckpt_path = Path(ckpt_path) if ckpt_path else fit / 'scorer_stage1_best.pt'
-    superv = [json.loads(l) for l in (out / 'supervision.jsonl').read_text().splitlines() if l.strip()]
+    superv = resolve_pack_paths(
+        [json.loads(l) for l in (out / 'supervision.jsonl').read_text().splitlines() if l.strip()],
+        out,
+    )
     model, ckpt = load_stage1_scorer(ckpt_path, device=device)
     size = int(ckpt.get('size', 224))
     feats = load_feature_table(out / 'features.jsonl')
 
+    # In-domain Stage-1 metrics use protocol==main (or non-RoadScene).
+    # RoadScene pairs also have split=test but belong to zero-shot protocols e1/e2.
+    def _indomain(rows: list[dict]) -> list[dict]:
+        out = []
+        for r in rows:
+            proto = r.get('protocol')
+            if proto in ('e1', 'e2', 'g1', 'g3'):
+                continue
+            if r.get('dataset') == 'RoadScene':
+                continue
+            out.append(r)
+        return out
+
     split_records: dict[str, list[dict]] = {}
     split_summary: dict[str, dict] = {}
     for split in ('train', 'val', 'test'):
-        rows = [r for r in superv if r.get('split') == split]
+        rows = _indomain([r for r in superv if r.get('split') == split])
         recs = score_rows(model, rows, size=size, device=device, batch_size=batch_size)
         split_records[split] = recs
         split_summary[split] = summarize_scorer(recs)

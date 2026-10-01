@@ -16,7 +16,7 @@ from torch.utils.data import DataLoader
 
 from pref.dataset import PreferencePairDataset, make_scene_loader
 from pref.graph import connectivity_report
-from pref.io import export_supervision_jsonl, load_jsonl, load_yaml
+from pref.io import export_supervision_jsonl, load_jsonl, load_yaml, resolve_pack_paths
 from pref.model.loss import scorer_rank_loss
 from pref.model.resnet_scorer import ResNet18ScalarScorer
 
@@ -151,9 +151,19 @@ def train_scorer_stage1(
     superv_path = out / 'supervision.jsonl'
     if refresh_supervision or not superv_path.is_file():
         superv_path = export_supervision_jsonl(out, eta=float(cfg.get('eta', eta)), cfg=cfg)
-    rows = load_jsonl(superv_path)
-    train_rows = [r for r in rows if r.get('split') == 'train']
-    val_rows = [r for r in rows if r.get('split') == 'val']
+    rows = resolve_pack_paths(load_jsonl(superv_path), out)
+    train_rows = [
+        r for r in rows
+        if r.get('split') == 'train'
+        and r.get('dataset') != 'RoadScene'
+        and r.get('protocol', 'main') == 'main'
+    ]
+    val_rows = [
+        r for r in rows
+        if r.get('split') == 'val'
+        and r.get('dataset') != 'RoadScene'
+        and r.get('protocol', 'main') == 'main'
+    ]
     if holdout_method:
         blocked = holdout_blocked_candidates(holdout_method)
         before_tr, before_va = len(train_rows), len(val_rows)

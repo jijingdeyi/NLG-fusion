@@ -1,0 +1,11 @@
+# Minimal deps for preference scorer (pref/ + scripts/pref_bench)
+
+torch>=2.0
+torchvision>=0.15
+numpy>=1.23
+opencv-python>=4.7
+Pillow>=9.0
+PyYAML>=6.0
+scipy>=1.10
+kornia>=0.7
+pytest>=7.0

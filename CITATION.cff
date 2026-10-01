@@ -1,0 +1,12 @@
+cff-version: 1.2.0
+title: "Training IVIF with just one score"
+message: "If you use this software, please cite it using these metadata."
+type: software
+authors:
+  - family-names: Yang
+    given-names: Kaixuan
+license: MIT
+repository-code: "https://github.com/OWNER/NLG-fusion"
+abstract: >
+  Preference-based scalar scorer for infrared-visible image fusion quality,
+  trained from pairwise human labels and evaluated against classical metrics.

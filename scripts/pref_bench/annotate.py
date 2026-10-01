@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Preference pairwise annotation UI.
 
-  python scripts/pref_bench/annotate.py --config /data/ykx/pref_bench/config.yaml --port 8766
+  python scripts/pref_bench/annotate.py --config /path/to/pref_bench/config.yaml --port 8766
 
 Open the page, pick (or create) an annotator and expertise, then label.
 Each browser stores its own identity, so several people can share one server.

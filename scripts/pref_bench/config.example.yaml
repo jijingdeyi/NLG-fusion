@@ -1,28 +1,32 @@
 # Preference-bench build config (example)
-# Copy to pref_bench/config.yaml and edit if needed.
+#
+# Copy and edit paths for your machine:
+#   cp scripts/pref_bench/config.example.yaml /path/to/pref_bench/config.yaml
+#
+# Layout expected under out_root after build + annotate:
+#   scenes.jsonl  pairs.jsonl  annotations.jsonl  labels_*.jsonl
+#   supervision.jsonl  candidates.jsonl  annotators.jsonl  fit/
 
 seed: 443
-out_root: /data/ykx/pref_bench
 
-# Multi-dataset SOTA fusions:
+# Preference database root (created by build.py / annotate.py)
+out_root: /path/to/pref_bench
+
+# Official fusion method outputs:
 #   {sota_root}/{DatasetName}/{method}/<same filename as ir/vi>
-sota_root: /data/ykx/sota
+sota_root: /path/to/sota
 
-# ---------------------------------------------------------------------------
-# Main preference pool (build gallery / scenes / pairs on these only)
-# ---------------------------------------------------------------------------
-# Source roots = splits that MATCH sota filenames.
 datasets:
   FMB:
-    root: /data/ykx/FMB/test            # ~280 pairs
+    root: /path/to/FMB/test
     n_scenes: 60
     gallery_pool: 120
   M3FD:
-    root: /data/ykx/M3FD/M3FD_Fusion    # ~300 pairs
+    root: /path/to/M3FD/M3FD_Fusion
     n_scenes: 60
     gallery_pool: 120
   MSRS:
-    root: /data/ykx/MSRS/test           # ~361 pairs
+    root: /path/to/MSRS/test
     n_scenes: 80
     gallery_pool: 200
 
@@ -31,10 +35,10 @@ split:
   val: 0.20
   test: 0.20
 
-# §3.3.3: IR+VI thumbnail MAE at or below this value shares one scene group.
+# Near-duplicate scene grouping (IR+VI thumbnail MAE)
 near_dup_mae: 0.05
 
-# K=8: max + m_hf + 4 SOTA + over/under exposure
+# K=8 candidates: priors + 4 public methods + exposure degradations
 candidates:
   - name: prior_max
     type: prior
@@ -67,13 +71,8 @@ candidates:
     gain: 1.4
 
 pairs_per_scene: 8
-# Deprecated: do not create forced-winner gold pairs (overexp ≠ always worse).
-# gold_frac: 0.05
 
 annotator_ids: [ann0, ann1, ann2]
-
-# Optional expertise map (also writable as {out_root}/annotators.jsonl).
-# Weight η for non-professional is applied only when aggregating y (not stored per label).
 annotators:
   - annotator_id: ann0
     expertise: professional
@@ -82,19 +81,3 @@ annotators:
   - annotator_id: ann2
     expertise: non-professional
 eta: 0.5
-
-# Annotation UI (one server, pick user + expertise in the page):
-#   python scripts/pref_bench/annotate.py --config /data/ykx/pref_bench/config.yaml --port 8766
-# Expertise is saved on the annotator (annotators.jsonl), weight η applied at aggregation.
-# Multi-round:
-#   python scripts/pref_bench/annotate.py --config ... --allow-reannotate \
-#       --queue /data/ykx/pref_bench/fit/reannotation_queue.json
-# Labels append to {out_root}/labels_{annotator}.jsonl
-#
-# Aggregate (y, R) then train scorers:
-#   python scripts/pref_bench/aggregate_preferences.py --config ...
-# Stage-1 (recommended first): soft pairwise → ResNet-18 scalar s_F (no σ)
-#   CUDA_VISIBLE_DEVICES=3 python scripts/pref_bench/train_scorer_stage1.py --config ... --gpu 3
-# Stage-2 (later): SharedScorer with A/Tie/B + uncertainty
-#   CUDA_VISIBLE_DEVICES=3 python scripts/pref_bench/train_scorer.py --config ... --gpu 3
-#   python scripts/pref_bench/qc_report.py --config ...

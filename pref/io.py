@@ -30,6 +30,25 @@ def load_jsonl(path: Path | str) -> list[dict]:
     return rows
 
 
+_PATH_KEYS = (
+    'ir', 'vi', 'path_a', 'path_b', 'left_path', 'right_path', 'fusion', 'path',
+)
+
+
+def resolve_pack_paths(rows: list[dict], out_root: Path | str) -> list[dict]:
+    """Join relative media paths against the preference-pack root (portable releases)."""
+    root = Path(out_root).resolve()
+    for r in rows:
+        for k in _PATH_KEYS:
+            v = r.get(k)
+            if not v or not isinstance(v, str):
+                continue
+            p = Path(v)
+            if not p.is_absolute():
+                r[k] = str((root / p).resolve())
+    return rows
+
+
 def append_jsonl(path: Path | str, row: dict) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)

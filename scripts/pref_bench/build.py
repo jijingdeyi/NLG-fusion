@@ -31,8 +31,8 @@ import yaml
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from ldt.dataset import list_paired_samples
-from ldt.fusion_prior import build_fusion_prior
+from pref.ivif_io import list_paired_samples
+from pref.fusion_prior import build_fusion_prior
 import torch
 
 

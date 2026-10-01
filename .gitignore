@@ -35,7 +35,7 @@ Thumbs.db
 # Jupyter
 .ipynb_checkpoints/
 
-# Weights & run artifacts (often contain local data paths)
+# Weights & run artifacts (allow released checkpoints + hpfm bundle)
 checkpoint/
 *.ckpt
 *.ckpt.*
@@ -43,6 +43,11 @@ checkpoint/
 *.pth
 *.onnx
 *.safetensors
+!checkpoints/
+!checkpoints/**/*.pt
+!checkpoints/**/*.json
+!checkpoints/**/*.md
+!hpfm/src/hpfm/weights.pt
 
 # Logs / experiment outputs
 logs/
@@ -53,12 +58,15 @@ runs/
 wandb/
 outputs/
 tb_logs/
+fit_stage1_subset_eval.json
 
 # Large / local datasets (keep outside git)
 data/
 /data/
 
-# Compiled / exported papers (keep .tex if needed)
+# Paper manuscript & figures (not public)
+score.md
+image/score/
 *.pdf
 paper/
 original.pdf
@@ -71,11 +79,7 @@ paper/**/*.synctex.gz
 paper/**/*.bbl
 paper/**/*.blg
 
-# Local notes / draft docs (keep README.md)
-experiments.md
-score.md
-
-# Misc local dumps
+# Local dumps
 *.npy
 *.npz
 *.h5
@@ -84,3 +88,28 @@ score.md
 *.tar
 *.tar.gz
 *.7z
+
+# Local preference DB configs (examples are tracked)
+**/pref_bench/config.yaml
+**/pref_bench_roadscene/config.yaml
+
+# Scratch notes
+experiments.md
+score_baselines.md
+
+# ---------------------------------------------------------------------------
+# Public scripts whitelist under scripts/
+# Everything else stays local (eval / experimental / legacy training).
+# ---------------------------------------------------------------------------
+/scripts/*
+!/scripts/pref_bench/
+/scripts/pref_bench/**
+!/scripts/pref_bench/build.py
+!/scripts/pref_bench/annotate.py
+!/scripts/pref_bench/aggregate_preferences.py
+!/scripts/pref_bench/train_scorer_stage1.py
+!/scripts/pref_bench/config.example.yaml
+!/scripts/pref_bench/README.md
+
+# Paper-only docs
+docs/REPRODUCE.md

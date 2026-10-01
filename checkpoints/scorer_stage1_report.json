@@ -1,0 +1,507 @@
+{
+  "supervision": "/data/ykx/pref_bench/supervision.jsonl",
+  "n_train": 1152,
+  "n_val": 292,
+  "pair_graph": {
+    "train_disconnected": 4,
+    "val_disconnected": 4,
+    "disconnected_scenes": [
+      {
+        "scene_id": "FMB/00049",
+        "n_candidates": 8,
+        "n_edges": 9,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "deg_underexp",
+            "method_a",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ],
+          [
+            "method_b",
+            "method_c"
+          ]
+        ]
+      },
+      {
+        "scene_id": "FMB/00645",
+        "n_candidates": 7,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "deg_underexp",
+            "method_a",
+            "method_d",
+            "prior_max"
+          ],
+          [
+            "method_b",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "FMB/01048",
+        "n_candidates": 8,
+        "n_edges": 9,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "method_a"
+          ],
+          [
+            "deg_underexp",
+            "method_b",
+            "method_c",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "M3FD/00687",
+        "n_candidates": 8,
+        "n_edges": 9,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "method_a",
+            "method_c",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ],
+          [
+            "deg_underexp",
+            "method_b"
+          ]
+        ]
+      },
+      {
+        "scene_id": "M3FD/01165",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_underexp",
+            "method_a",
+            "method_b",
+            "method_c",
+            "method_d",
+            "prior_mhf"
+          ],
+          [
+            "deg_overexp",
+            "prior_max"
+          ]
+        ]
+      },
+      {
+        "scene_id": "M3FD/01406",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "method_a",
+            "method_b",
+            "method_c",
+            "prior_max",
+            "prior_mhf"
+          ],
+          [
+            "deg_underexp",
+            "method_d"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/00353D",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "method_a",
+            "method_c",
+            "method_d"
+          ],
+          [
+            "deg_underexp",
+            "method_b",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/00533D",
+        "n_candidates": 7,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "deg_underexp",
+            "method_a",
+            "method_c",
+            "prior_mhf"
+          ],
+          [
+            "method_b",
+            "method_d"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/00734N",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "method_a",
+            "method_b"
+          ],
+          [
+            "deg_overexp",
+            "deg_underexp",
+            "method_c",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/01094N",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_underexp",
+            "method_a",
+            "method_c",
+            "method_d",
+            "prior_mhf"
+          ],
+          [
+            "deg_overexp",
+            "method_b",
+            "prior_max"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/01315N",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "method_a",
+            "prior_mhf"
+          ],
+          [
+            "deg_overexp",
+            "deg_underexp",
+            "method_b",
+            "method_c",
+            "method_d",
+            "prior_max"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/01413D",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_underexp",
+            "method_a",
+            "method_d"
+          ],
+          [
+            "deg_overexp",
+            "method_b",
+            "method_c",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/01435D",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_overexp",
+            "method_a"
+          ],
+          [
+            "deg_underexp",
+            "method_b",
+            "method_c",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      },
+      {
+        "scene_id": "MSRS/01474D",
+        "n_candidates": 8,
+        "n_edges": 8,
+        "n_components": 2,
+        "components": [
+          [
+            "deg_underexp",
+            "method_a"
+          ],
+          [
+            "deg_overexp",
+            "method_b",
+            "method_c",
+            "method_d",
+            "prior_max",
+            "prior_mhf"
+          ]
+        ]
+      }
+    ]
+  },
+  "best": {
+    "val_loss": 0.45343147791979754,
+    "epoch": 10,
+    "val_acc_soft": 0.7842465753424658,
+    "val_acc_decisive": 0.7878787878787878
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.6683483901951048,
+      "backbone": "frozen",
+      "val_n": 292,
+      "val_loss": 0.6349774036834985,
+      "val_acc_soft": 0.6506849315068494,
+      "val_acc_decisive": 0.6553030303030303,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.6425724774599075,
+      "backbone": "frozen",
+      "val_n": 292,
+      "val_loss": 0.6172234247942839,
+      "val_acc_soft": 0.6712328767123288,
+      "val_acc_decisive": 0.6666666666666666,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.6143152593738503,
+      "backbone": "frozen",
+      "val_n": 292,
+      "val_loss": 0.5962597964122525,
+      "val_acc_soft": 0.6643835616438356,
+      "val_acc_decisive": 0.6628787878787878,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.6257372039059798,
+      "backbone": "frozen",
+      "val_n": 292,
+      "val_loss": 0.590939844422241,
+      "val_acc_soft": 0.6883561643835616,
+      "val_acc_decisive": 0.6893939393939394,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.5913229899273978,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.5586050523773027,
+      "val_acc_soft": 0.702054794520548,
+      "val_acc_decisive": 0.7083333333333334,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 6,
+      "train_loss": 0.556295862628354,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.5282093544176154,
+      "val_acc_soft": 0.7431506849315068,
+      "val_acc_decisive": 0.75,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 7,
+      "train_loss": 0.5088119378520383,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.489915145412353,
+      "val_acc_soft": 0.773972602739726,
+      "val_acc_decisive": 0.7803030303030303,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 8,
+      "train_loss": 0.4557035931696494,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.45976996248350377,
+      "val_acc_soft": 0.7876712328767124,
+      "val_acc_decisive": 0.7954545454545454,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 9,
+      "train_loss": 0.4661345115552346,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.46478281246443054,
+      "val_acc_soft": 0.773972602739726,
+      "val_acc_decisive": 0.7765151515151515,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 10,
+      "train_loss": 0.4189272529135148,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.45343147791979754,
+      "val_acc_soft": 0.7842465753424658,
+      "val_acc_decisive": 0.7878787878787878,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 11,
+      "train_loss": 0.4107751121951474,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.46731145558923587,
+      "val_acc_soft": 0.7842465753424658,
+      "val_acc_decisive": 0.7878787878787878,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 12,
+      "train_loss": 0.4122031442821026,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.46910101135645116,
+      "val_acc_soft": 0.773972602739726,
+      "val_acc_decisive": 0.7803030303030303,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 13,
+      "train_loss": 0.4268958080146048,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.4759869152724944,
+      "val_acc_soft": 0.791095890410959,
+      "val_acc_decisive": 0.7916666666666666,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 14,
+      "train_loss": 0.4107332653883431,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.4811787590810139,
+      "val_acc_soft": 0.7705479452054794,
+      "val_acc_decisive": 0.7689393939393939,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 15,
+      "train_loss": 0.3772648719863759,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.47352357478680746,
+      "val_acc_soft": 0.7945205479452054,
+      "val_acc_decisive": 0.7954545454545454,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 16,
+      "train_loss": 0.3760757225876053,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.4690946357571356,
+      "val_acc_soft": 0.797945205479452,
+      "val_acc_decisive": 0.803030303030303,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 17,
+      "train_loss": 0.3754914090451267,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.47710525388589575,
+      "val_acc_soft": 0.7876712328767124,
+      "val_acc_decisive": 0.7878787878787878,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 18,
+      "train_loss": 0.34999922662973404,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.45780980620534956,
+      "val_acc_soft": 0.7945205479452054,
+      "val_acc_decisive": 0.803030303030303,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 19,
+      "train_loss": 0.3655659809915556,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.4704593791609634,
+      "val_acc_soft": 0.7808219178082192,
+      "val_acc_decisive": 0.7840909090909091,
+      "val_n_decisive": 264
+    },
+    {
+      "epoch": 20,
+      "train_loss": 0.3446631400535504,
+      "backbone": "full",
+      "val_n": 292,
+      "val_loss": 0.4647762927155364,
+      "val_acc_soft": 0.7876712328767124,
+      "val_acc_decisive": 0.7916666666666666,
+      "val_n_decisive": 264
+    }
+  ],
+  "hparams": {
+    "epochs": 20,
+    "freeze_epochs": 4,
+    "batch_size": 16,
+    "lr_head": 0.0001,
+    "lr_backbone": 1e-05,
+    "size": 224,
+    "tau": 1.0,
+    "control_downweight": 0.35
+  }
+}

@@ -3,11 +3,11 @@
 
   # source ablation (3 jobs; full IR+VIS+F already in scorer_stage1_best.pt)
   CUDA_VISIBLE_DEVICES=0 python scripts/pref_bench/train_scorer_stage1.py \\
-      --config /data/ykx/pref_bench/config.yaml --gpu 0 --input-mode f_only
+      --config /path/to/pref_bench/config.yaml --gpu 0 --input-mode f_only
 
   # leave-one-method-out
   CUDA_VISIBLE_DEVICES=1 python scripts/pref_bench/train_scorer_stage1.py \\
-      --config /data/ykx/pref_bench/config.yaml --gpu 1 --holdout-method method_a
+      --config /path/to/pref_bench/config.yaml --gpu 1 --holdout-method method_a
 """
 
 from __future__ import annotations
