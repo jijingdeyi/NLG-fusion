@@ -1,0 +1,66 @@
+{
+  "inventory": {
+    "road_supervision": 180,
+    "road_pairs": 180,
+    "unmatched_road_supervision": 0,
+    "indomain_test": 239,
+    "hpfm_cache_rows": 239,
+    "hpfm_cache_duplicate_ids": 0,
+    "hpfm_cache_missing_on_test": 0,
+    "hpfm_cache_q_mismatch": 0,
+    "hpfm_cache_ab_flips": 0,
+    "record_duplicate_keys": 0,
+    "missing_files": 0
+  },
+  "by_protocol": {
+    "e1": {
+      "n": 90,
+      "scenes": 30,
+      "decisive": 85,
+      "q_half": 5,
+      "q_kinds": {
+        "decisive_B": 13,
+        "active_tie": 5,
+        "decisive_A": 72
+      },
+      "missing_files": 0
+    },
+    "e2": {
+      "n": 90,
+      "scenes": 30,
+      "decisive": 85,
+      "q_half": 5,
+      "q_kinds": {
+        "decisive_A": 50,
+        "decisive_B": 35,
+        "active_tie": 5
+      },
+      "missing_files": 0
+    },
+    "indomain": {
+      "n": 239,
+      "scenes": 29,
+      "decisive": 209,
+      "q_half": 30,
+      "q_kinds": {
+        "decisive_A": 81,
+        "decisive_B": 128,
+        "aggregated_half": 6,
+        "active_tie": 24
+      },
+      "missing_files": 0
+    },
+    "indomain_natural": {
+      "n": 137,
+      "scenes": 29,
+      "decisive": 113,
+      "decisive_scenes": 29
+    },
+    "indomain_public": {
+      "n": 52,
+      "scenes": 25,
+      "decisive": 44,
+      "decisive_scenes": 23
+    }
+  }
+}

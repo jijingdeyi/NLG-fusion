@@ -1,0 +1,16 @@
+{
+  "pair_id": "e1::RoadScene/34::ddfm__swinfusion",
+  "candidate_a": "ddfm",
+  "candidate_b": "swinfusion",
+  "q_A": 1.0,
+  "q_kind": "decisive_A",
+  "ir": "/data/ykx/pref_bench_roadscene/scenes/RoadScene/34/ir/34.jpg",
+  "vi": "/data/ykx/pref_bench_roadscene/scenes/RoadScene/34/vi/34.jpg",
+  "path_a": "/data/ykx/pref_bench_roadscene/scenes/RoadScene/34/fusions/ddfm.png",
+  "path_b": "/data/ykx/pref_bench_roadscene/scenes/RoadScene/34/fusions/swinfusion.png",
+  "d_cal": 3.7717747688293457,
+  "official": "A",
+  "swapped_d_cal": -3.7740273475646973,
+  "swapped_official": "B",
+  "sum": -0.0022525787353515625
+}

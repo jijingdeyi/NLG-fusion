@@ -165,16 +165,17 @@ def recommend_review(
     otherwise flood the queue with pairs that are not on any cycle.
     Do NOT dump every pair with R < r_thresh (first-round R≈0.25 for most).
     """
-    # (cand_i, cand_j) unordered → pair_id (first wins if duplicates)
-    cand_pair_to_id: dict[frozenset, str] = {}
+    # (scene, unordered method pair) → pair_id. Method names repeat across scenes.
+    cand_pair_to_id: dict[tuple[str, frozenset], str] = {}
     scene_of: dict[str, str] = {}
     for p in pairs:
         pid = p.get('pair_id') or p['task_id']
-        scene_of[pid] = p.get('scene_id', '')
-        scene_of[p.get('task_id', pid)] = p.get('scene_id', '')
+        sid = p.get('scene_id', '')
+        scene_of[pid] = sid
+        scene_of[p.get('task_id', pid)] = sid
         a, b = p.get('candidate_a') or p.get('left'), p.get('candidate_b') or p.get('right')
         if a and b:
-            cand_pair_to_id.setdefault(_pair_key(a, b), pid)
+            cand_pair_to_id.setdefault((sid, _pair_key(a, b)), pid)
 
     by_scene: dict[str, dict] = defaultdict(dict)
     for row in supervision_rows:
@@ -187,7 +188,7 @@ def recommend_review(
             continue
         sid = row.get('scene_id') or scene_of.get(pid, '')
         by_scene[sid][(a, b)] = edge
-        cand_pair_to_id.setdefault(_pair_key(a, b), pid)
+        cand_pair_to_id.setdefault((sid, _pair_key(a, b)), pid)
 
     cycle_scenes = []
     edges_by_scene: dict[str, set[frozenset]] = defaultdict(set)
@@ -205,21 +206,22 @@ def recommend_review(
     # Prefer denser cycles when capping the queue.
     cycle_scenes.sort(key=lambda s: -s['n_cycles'])
     cycle_pairs: list[str] = []
-    seen_edge: set[frozenset] = set()
+    seen_edge: set[tuple[str, frozenset]] = set()
     kept_scenes: list[dict] = []
     for sc in cycle_scenes:
         sid = sc['scene_id']
         hit_cap = False
         for ek in edges_by_scene.get(sid, ()):
-            if ek in seen_edge:
+            key = (sid, ek)
+            if key in seen_edge:
                 continue
-            pid = cand_pair_to_id.get(ek)
+            pid = cand_pair_to_id.get(key)
             if not pid:
                 continue
             if len(cycle_pairs) >= max_queue:
                 hit_cap = True
                 break
-            seen_edge.add(ek)
+            seen_edge.add(key)
             cycle_pairs.append(pid)
         kept_scenes.append(sc)
         if hit_cap:
@@ -260,13 +262,13 @@ def recommend_review(
     n_low_in = len([p for p in chosen if p in set(low_pairs)]) if low_pairs else 0
     note = {
         'cycle': (
-            f'成环边上的 pair 优先复核'
-            f'（{len(kept_scenes)} 个场景、{len(cycle_pairs)} 条边，非整场景）'
+            f'Cycle-edge pairs are reviewed first '
+            f'({len(kept_scenes)} scenes, {len(cycle_pairs)} edges; not whole scenes)'
         ),
-        'low_R': f'另补 {n_low_in} 条当前 R 最低的 pair（不是所有 R<{r_thresh}）',
+        'low_R': f'Also added {n_low_in} pairs with the lowest current R (not every pair with R<{r_thresh})',
         'random': (
-            f'暂无成环；各 pair 的 R 也几乎相同，'
-            f'按 3.3.1 随机抽约 {int(frac*100)}%（上限 {max_queue}）'
+            f'No cycles yet, and R is nearly the same across pairs. '
+            f'Sampling about {int(frac*100)}% at random (cap {max_queue})'
         ),
     }
     return {

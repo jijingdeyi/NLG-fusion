@@ -1,0 +1,4 @@
+protocol,q_kind,n,lpifm_official_tie
+e1,active_tie,8,0
+e2,active_tie,8,2
+e2,aggregated_half,10,0

@@ -1,0 +1,68 @@
+{
+  "overall": {
+    "n_pairs": 75,
+    "n_ties": 2,
+    "n_scenes": 5,
+    "n": 73,
+    "hpfm_correct": 55,
+    "lpifm_A_correct": 59,
+    "lpifm_A_reverse": 10,
+    "lpifm_A_tie": 4,
+    "lpifm_B_correct": 61,
+    "only_hpfm_A": 9,
+    "only_lpifm_A": 13,
+    "only_hpfm_B": 7,
+    "only_lpifm_B": 13,
+    "diff_A_pp": -5.47945205479452,
+    "diff_A_ci95_low_pp": -15.068493150684937,
+    "diff_A_ci95_high_pp": 4.109589041095885,
+    "diff_B_pp": -8.21917808219178,
+    "diff_B_ci95_low_pp": -17.808219178082197,
+    "diff_B_ci95_high_pp": 1.3513513513513487,
+    "hpfm_zero": 0,
+    "lpifm_zero": 0,
+    "variant": "swa"
+  },
+  "by_scene": [
+    {
+      "scene_id": "carLight",
+      "n": 14,
+      "hpfm": 7,
+      "lpifm_A": 10,
+      "lpifm_A_tie": 2,
+      "lpifm_B": 10
+    },
+    {
+      "scene_id": "carShadow",
+      "n": 15,
+      "hpfm": 11,
+      "lpifm_A": 13,
+      "lpifm_A_tie": 1,
+      "lpifm_B": 14
+    },
+    {
+      "scene_id": "manCall",
+      "n": 15,
+      "hpfm": 12,
+      "lpifm_A": 13,
+      "lpifm_A_tie": 0,
+      "lpifm_B": 13
+    },
+    {
+      "scene_id": "running",
+      "n": 15,
+      "hpfm": 14,
+      "lpifm_A": 13,
+      "lpifm_A_tie": 0,
+      "lpifm_B": 13
+    },
+    {
+      "scene_id": "tricycle",
+      "n": 14,
+      "hpfm": 11,
+      "lpifm_A": 10,
+      "lpifm_A_tie": 1,
+      "lpifm_B": 11
+    }
+  ]
+}

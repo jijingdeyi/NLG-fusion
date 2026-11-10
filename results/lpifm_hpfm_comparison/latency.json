@@ -1,0 +1,33 @@
+{
+  "gpu_name": "NVIDIA GeForce RTX 3090",
+  "cpu_threads": 32,
+  "scene": "RoadScene/1",
+  "hpfm_candidate": "tardal",
+  "lpifm_pair": [
+    "tardal",
+    "swinfusion"
+  ],
+  "warmup": 20,
+  "runs": 100,
+  "hpfm": {
+    "params_m": 11.308097,
+    "flops_g": 1.82365312,
+    "input": "1x3x224x224",
+    "resolution": 224,
+    "unit": "one fused image",
+    "gpu_ms": 1.8565348722040653,
+    "gpu_rank4_ms": 7.471874421462417,
+    "cpu_ms": 10.400999868288636
+  },
+  "lpifm": {
+    "params_m": 105.237814,
+    "flops_g": 46.672247808,
+    "input": "four 3x224x224 tensors; context is 6-channel then projected",
+    "resolution": 224,
+    "variant": "swa",
+    "unit": "one pair",
+    "gpu_ms": 41.67356436140835,
+    "gpu_rank6pairs_ms": 248.03604252636433,
+    "cpu_ms": 295.1449416112155
+  }
+}

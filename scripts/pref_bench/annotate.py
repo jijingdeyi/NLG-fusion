@@ -39,14 +39,38 @@ EXPERTISE = ('professional', 'non-professional')
 ANNOTATOR_RE = re.compile(r'^[\w\-]{1,32}$', re.UNICODE)
 
 PROMPT = (
-    '综合考虑红外显著目标、可见光纹理细节、结构清晰度及伪影，'
-    '请选择整体融合质量更好的结果。'
+    'Considering infrared salient targets, visible texture, structural clarity, and artifacts, '
+    'choose the fusion result with better overall quality.'
 )
 
 
 def load_config(path: Path) -> dict:
     with path.open(encoding='utf-8') as f:
         return yaml.safe_load(f)
+
+
+def spread_by_scene(pairs: list[dict]) -> list[dict]:
+    """Order pairs so the same scene does not appear twice in a row."""
+    groups: dict[str, list[dict]] = {}
+    for pair in pairs:
+        groups.setdefault(str(pair.get('scene_id') or pair.get('task_id') or ''), []).append(pair)
+    buckets = list(groups.values())
+    for bucket in buckets:
+        random.shuffle(bucket)
+    ordered: list[dict] = []
+    previous: list[dict] | None = None
+    while buckets:
+        random.shuffle(buckets)
+        if previous is not None and len(buckets) > 1 and buckets[0] is previous:
+            buckets.append(buckets.pop(0))
+        bucket = buckets[0]
+        ordered.append(bucket.pop())
+        if bucket:
+            previous = bucket
+        else:
+            buckets.pop(0)
+            previous = None
+    return ordered
 
 
 def load_jsonl(path: Path) -> list[dict]:
@@ -64,13 +88,13 @@ def load_jsonl(path: Path) -> list[dict]:
 def valid_annotator_id(annotator_id: str) -> str:
     aid = (annotator_id or '').strip()
     if not ANNOTATOR_RE.fullmatch(aid):
-        raise ValueError('用户名需为 1–32 位：字母、数字、中文、下划线或短横线')
+        raise ValueError('Username must be 1–32 characters: letters, digits, underscore, or hyphen')
     return aid
 
 
 def valid_expertise(expertise: str) -> str:
     if expertise not in EXPERTISE:
-        raise ValueError('expertise 必须是 professional 或 non-professional')
+        raise ValueError('expertise must be professional or non-professional')
     return expertise
 
 
@@ -234,7 +258,7 @@ class AnnotateState:
         aid = valid_annotator_id(annotator_id)
         exp = valid_expertise(expertise)
         if mode not in ('label', 'recheck'):
-            raise ValueError('mode 必须是 label 或 recheck')
+            raise ValueError('mode must be label or recheck')
         with self.lock:
             rows = load_jsonl(self.annotators_path)
             found = False
@@ -302,10 +326,10 @@ class AnnotateState:
     ) -> dict:
         self.recheck_ids = set(pair_ids)
         note = (
-            f'继续上一轮推荐复标（还剩 {len(remaining)} / {len(pair_ids)}；'
-            f'刷新不会把已标过的再塞回来）'
+            f'Resuming the previous review queue ({len(remaining)} / {len(pair_ids)} left; '
+            f'refresh will not bring back items already labeled)'
             if resumed
-            else f'推荐复标 · {len(pair_ids)} 题'
+            else f'Review queue · {len(pair_ids)} items'
         )
         info = {
             'pair_ids': pair_ids,
@@ -372,7 +396,7 @@ class AnnotateState:
         note_extra = q.get('note') or ''
         info = self._bind_recheck_pass(pair_ids, remaining, resumed=True)
         if note_extra:
-            info['note'] = f'{info["note"]}；{note_extra}'
+            info['note'] = f'{info["note"]}; {note_extra}'
         return info
 
     def _recommend_locked(self) -> dict:
@@ -418,17 +442,17 @@ class AnnotateState:
                 [p['task_id'] for p in pool],
             )
             # Same pass across page refresh: skip pairs already labeled once this pass.
-            queue = [
+            queue = spread_by_scene([
                 p for p in pool
                 if int(round_counts.get(p['task_id'], 0)) <= int(baseline.get(p['task_id'], 0))
-            ]
+            ])
         elif mode == 'reannotate' or self.allow_reannotate:
             mode = 'reannotate'
-            queue = list(self.pairs)
+            queue = spread_by_scene(list(self.pairs))
             pool = self.pairs
         else:
             pool = self.pairs
-            queue = [p for p in self.pairs if p['task_id'] not in done]
+            queue = spread_by_scene([p for p in self.pairs if p['task_id'] not in done])
         user = {
             'done': done,
             'round_counts': round_counts,
@@ -652,7 +676,7 @@ class AnnotateState:
             }
 
 HTML = r"""<!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
@@ -720,12 +744,15 @@ HTML = r"""<!DOCTYPE html>
     display: flex; justify-content: space-between; background: var(--panel);
   }
   .imgwrap {
-    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+    flex: 1; min-height: 0; min-width: 0;
+    position: relative;
     background: #000;
   }
   .imgwrap img {
-    max-width: 100%; max-height: 100%; width: auto; height: auto;
-    object-fit: contain; display: block;
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: contain;
+    display: block;
   }
   .actions {
     flex: 0 0 var(--act);
@@ -777,11 +804,11 @@ HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <strong>IVIF 偏好标注</strong>
-  <span class="muted" id="meta">请先选择用户</span>
+  <strong>IVIF Preference Annotation</strong>
+  <span class="muted" id="meta">Select an annotator</span>
   <div class="bar" title="progress"><i id="pbar"></i></div>
   <span class="muted" id="count">—</span>
-  <button type="button" id="switch" hidden>切换用户</button>
+  <button type="button" id="switch" hidden>Switch user</button>
 </header>
 <div id="app"></div>
 <script>
@@ -796,15 +823,15 @@ let roster = [];
 function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
-function expLabel(e) { return e === 'non-professional' ? '非专业' : '专业'; }
+function expLabel(e) { return e === 'non-professional' ? 'Non-professional' : 'Professional'; }
 
 function setProgress(p) {
   const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
   document.getElementById('pbar').style.width = pct + '%';
   document.getElementById('count').textContent = `${p.done} / ${p.total}`;
   document.getElementById('meta').textContent =
-    `${p.annotator} · ${expLabel(p.expertise)} · 剩余 ${p.remaining}`
-    + (p.mode === 'recheck' ? ' · 复标' : '');
+    `${p.annotator} · ${expLabel(p.expertise)} · ${p.remaining} left`
+    + (p.mode === 'recheck' ? ' · review' : '');
   document.getElementById('switch').hidden = false;
 }
 
@@ -812,9 +839,9 @@ function renderDone(p) {
   setProgress(p);
   const extra = p.recommend_note ? `<p class="muted">${esc(p.recommend_note)}</p>` : '';
   app.innerHTML = `<div class="done-box">
-    <h1>本轮已完成</h1>
-    <p class="muted">${esc(p.annotator)}（${expLabel(p.expertise)}）已写完当前队列。</p>
-    <p class="muted">原始记录在 ${esc(p.labels_path)}。关掉标注程序后会统一重算并保存 supervision.jsonl。</p>
+    <h1>This round is complete</h1>
+    <p class="muted">${esc(p.annotator)} (${expLabel(p.expertise)}) has finished the current queue.</p>
+    <p class="muted">Raw labels are in ${esc(p.labels_path)}. Closing this program recomputes and saves supervision.jsonl.</p>
     ${extra}
   </div>`;
 }
@@ -835,16 +862,16 @@ function renderTask(t) {
   app.innerHTML = `
     <div class="prompt">${esc(t.prompt)}</div>
     <div class="grid4">
-      ${cell(t.ir_url, '红外 IR', t.dataset + ' · ' + t.scene_id)}
-      ${cell(t.vi_url, '可见光 VI', t.split)}
-      ${cell(t.left_url, '结果 A', '点图或按 1', 'left')}
-      ${cell(t.right_url, '结果 B', '点图或按 3', 'right')}
+      ${cell(t.ir_url, 'Infrared (IR)', t.dataset + ' · ' + t.scene_id)}
+      ${cell(t.vi_url, 'Visible (VI)', t.split)}
+      ${cell(t.left_url, 'Result A', 'Click or press 1', 'left')}
+      ${cell(t.right_url, 'Result B', 'Click or press 3', 'right')}
     </div>
     <div class="actions">
-      <button type="button" class="primary" id="btn-left">A 更好 (1)</button>
-      <button type="button" class="tie" id="btn-tie">难分 / 近似 (2 / 空格)</button>
-      <button type="button" class="primary" id="btn-right">B 更好 (3)</button>
-      <span class="hint">点图只能选边 · 难分请点黄按钮或按 2 / 空格</span>
+      <button type="button" class="primary" id="btn-left">A is better (1)</button>
+      <button type="button" class="tie" id="btn-tie">Tie / about the same (2 / Space)</button>
+      <button type="button" class="primary" id="btn-right">B is better (3)</button>
+      <span class="hint">Clicking an image selects that side. For a tie, use the yellow button or press 2 / Space.</span>
     </div>
   `;
   document.getElementById('btn-left').onclick = () => submit('left');
@@ -855,34 +882,34 @@ function renderTask(t) {
 function renderGate(err) {
   task = null;
   document.getElementById('switch').hidden = true;
-  document.getElementById('meta').textContent = '请先选择用户';
+  document.getElementById('meta').textContent = 'Select an annotator';
   document.getElementById('count').textContent = '—';
   document.getElementById('pbar').style.width = '0%';
   const opts = roster.map(a => {
     const sel = session && session.annotator_id === a.annotator_id ? ' selected' : '';
-    return `<option value="${esc(a.annotator_id)}"${sel}>${esc(a.annotator_id)} · ${expLabel(a.expertise)} · ${a.n_labels} 条</option>`;
+    return `<option value="${esc(a.annotator_id)}"${sel}>${esc(a.annotator_id)} · ${expLabel(a.expertise)} · ${a.n_labels} labels</option>`;
   }).join('');
   const cur = (session && session.annotator_id) || DEFAULT_ID || '';
   const exp = (session && session.expertise) || 'professional';
   app.innerHTML = `
     <form class="gate" id="gate">
-      <h1>选择标注者</h1>
-      <p class="muted">同一台服务可多人共用。身份保存在这个浏览器里，专业度记在标注者档案上，不写进每一条点击。</p>
-      <label for="who">已有用户</label>
+      <h1>Select an annotator</h1>
+      <p class="muted">One server can be shared. Identity stays in this browser. Expertise is stored on the annotator profile, not on each click.</p>
+      <label for="who">Existing users</label>
       <select id="who">
-        <option value="">— 新建用户 —</option>
+        <option value="">— New user —</option>
         ${opts}
       </select>
-      <label for="newid">用户名（新建或改选后确认）</label>
-      <input id="newid" type="text" maxlength="32" placeholder="例如 ann0、zhang" value="${esc(cur)}" autocomplete="off"/>
-      <label>专业度</label>
+      <label for="newid">Username (new, or confirm after selecting)</label>
+      <input id="newid" type="text" maxlength="32" placeholder="e.g. ann0" value="${esc(cur)}" autocomplete="off"/>
+      <label>Expertise</label>
       <div class="radios">
-        <label><input type="radio" name="exp" value="professional" ${exp !== 'non-professional' ? 'checked' : ''}/> 专业</label>
-        <label><input type="radio" name="exp" value="non-professional" ${exp === 'non-professional' ? 'checked' : ''}/> 非专业</label>
+        <label><input type="radio" name="exp" value="professional" ${exp !== 'non-professional' ? 'checked' : ''}/> Professional</label>
+        <label><input type="radio" name="exp" value="non-professional" ${exp === 'non-professional' ? 'checked' : ''}/> Non-professional</label>
       </div>
       ${err ? `<p class="muted" style="color:#f0b429">${esc(err)}</p>` : ''}
-      <button class="primary go" type="submit" data-mode="label">继续未标题目</button>
-      <button class="go" type="submit" data-mode="recheck">推荐复标</button>
+      <button class="primary go" type="submit" data-mode="label">Continue unlabeled items</button>
+      <button class="go" type="submit" data-mode="recheck">Recommended review</button>
     </form>`;
   const who = document.getElementById('who');
   const box = document.getElementById('newid');
@@ -909,12 +936,12 @@ function renderGate(err) {
         body: JSON.stringify({ annotator_id, expertise, mode }),
       });
       const data = await r.json();
-      if (!r.ok) throw new Error(data.error || '无法保存用户');
+      if (!r.ok) throw new Error(data.error || 'Could not save the user');
       session = { annotator_id: data.annotator_id, expertise: data.expertise, mode };
       localStorage.setItem(STORE, JSON.stringify(session));
       if (data.recommendation && data.recommendation.note) {
         document.getElementById('meta').textContent =
-          `${data.recommendation.note} · 共 ${data.recommendation.n} 题`;
+          `${data.recommendation.note} · ${data.recommendation.n} items`;
       }
       await refreshRoster();
       await loadNext();
@@ -935,7 +962,7 @@ async function loadNext() {
   const q = encodeURIComponent(session.annotator_id);
   const r = await fetch('/api/next?annotator_id=' + q);
   const data = await r.json();
-  if (!r.ok) { renderGate(data.error || '请重新选择用户'); return; }
+  if (!r.ok) { renderGate(data.error || 'Select the user again'); return; }
   if (!data.task) renderDone(data.progress);
   else renderTask(data.task);
 }
@@ -1007,7 +1034,7 @@ window.addEventListener('pagehide', () => {
 (async function boot() {
   try { session = JSON.parse(localStorage.getItem(STORE) || 'null'); } catch (e) { session = null; }
   await refreshRoster();
-  // Always show the gate so the user can pick identity / 推荐复标.
+  // Always show the gate so the user can pick identity / recommended review.
   // Remembered session only pre-fills the form.
   renderGate();
 })();
@@ -1059,7 +1086,7 @@ def make_handler(state: AnnotateState):
                 qs = parse_qs(parsed.query)
                 aid = (qs.get('annotator_id') or [None])[0]
                 if not aid:
-                    self._json(400, {'error': '请先选择用户'})
+                    self._json(400, {'error': 'Select an annotator'})
                     return
                 try:
                     with state.lock:
@@ -1170,7 +1197,7 @@ def main() -> None:
     print(f'[annotate] http://127.0.0.1:{args.port}/')
     print(f'[annotate] Cursor Ports → Forward {args.port}')
     print('[annotate] pick user + expertise in the page; keys: 1=A, 2/Space=tie, 3=B')
-    print('[annotate] 关掉浏览器标签页后退出；锁屏/休眠不会停服务。退出时聚合一次 (y, R)')
+    print('[annotate] Closing the browser tab does not stop the server. Aggregation runs once on exit.')
 
     httpd = ThreadingHTTPServer(('0.0.0.0', args.port), make_handler(state))
     state.httpd = httpd

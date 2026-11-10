@@ -96,20 +96,3 @@ paper/**/*.blg
 # Scratch notes
 experiments.md
 score_baselines.md
-
-# ---------------------------------------------------------------------------
-# Public scripts whitelist under scripts/
-# Everything else stays local (eval / experimental / legacy training).
-# ---------------------------------------------------------------------------
-/scripts/*
-!/scripts/pref_bench/
-/scripts/pref_bench/**
-!/scripts/pref_bench/build.py
-!/scripts/pref_bench/annotate.py
-!/scripts/pref_bench/aggregate_preferences.py
-!/scripts/pref_bench/train_scorer_stage1.py
-!/scripts/pref_bench/config.example.yaml
-!/scripts/pref_bench/README.md
-
-# Paper-only docs
-docs/REPRODUCE.md
