@@ -7,6 +7,7 @@ Recommended flow (click-to-select sources, 4 methods + 2 exposures):
   3) materialize     — copy IR/VI (real files), copy 4 SOTA fusions, synthesize over/under-exp
   4) sample_pairs    — sparse pairwise JSONL for annotation UI
   5) annotate        — serve labeling UI (or: python scripts/pref_bench/annotate.py)
+  6) browse          — read-only review of supervision.jsonl
 
 Also supported: sample_scenes (random, no clicking).
 
@@ -559,14 +560,15 @@ def _build_one_candidate(
         folder = _sota_dir(cfg, sc['dataset'], spec)
         src = _find_fusion_file(folder, name)
         if src is None:
-            print(f'[warn] missing SOTA {folder}/{name} ({sc["scene_id"]})')
-            return
+            if not cfg.get('_quiet'):
+                print(f'[warn] missing SOTA {folder}/{name} ({sc["scene_id"]})')
+            return False
         # Keep color as stored by SOTA (BGR); do not force grayscale.
         raw = cv2.imread(str(src), cv2.IMREAD_COLOR)
         if raw is None:
             raw = cv2.imread(str(src), cv2.IMREAD_UNCHANGED)
         if raw is None:
-            return
+            return False
         _write_img(dst, raw)
         built[cname] = raw
     elif ctype == 'degrade':
@@ -575,51 +577,59 @@ def _build_one_candidate(
         if seed_img is None:
             seed_img = built.get('prior_max')
         if seed_img is None:
-            print(f'[warn] no seed for degrade {cname} @ {sc["scene_id"]}')
-            return
+            if not cfg.get('_quiet'):
+                print(f'[warn] no seed for degrade {cname} @ {sc["scene_id"]}')
+            return False
         img = _degrade(seed_img, spec.get('mode', 'overexp'), float(spec.get('gain', 1.4)))
         _write_img(dst, img)
         built[cname] = img
     elif ctype == 'ckpt':
-        pass  # optional batch below
+        return False
     else:
         raise ValueError(f'unknown type {ctype}')
+    return True
+
+
+def materialize_one(cfg: dict, sc: dict) -> list[str]:
+    """Copy one scene and build its fusion files. Does not touch pairs or labels."""
+    out = Path(cfg['out_root'])
+    cand_specs = list(cfg.get('candidates') or [])
+    pass1 = [s for s in cand_specs if s['type'] != 'degrade']
+    pass2 = [s for s in cand_specs if s['type'] == 'degrade']
+    scene_dir = out / 'scenes' / sc['scene_id']
+    root = Path(sc['root'])
+    name = sc['filename']
+    ir_src = root / 'ir' / name
+    vi_src = root / 'vi' / name
+    _copy_file(ir_src, scene_dir / 'ir' / name)
+    _copy_file(vi_src, scene_dir / 'vi' / name)
+    ir = _read_gray(ir_src)
+    vi = _read_gray(vi_src)
+    vi_bgr = cv2.imread(str(vi_src), cv2.IMREAD_COLOR)
+    built: dict[str, np.ndarray] = {'prior_max': _prior_max(ir, vi)}
+    missing: list[str] = []
+    for spec in pass1 + pass2:
+        wrote = _build_one_candidate(spec, cfg, sc, name, ir, vi, vi_bgr, built, scene_dir)
+        if spec.get('type') == 'sota' and not wrote:
+            missing.append(spec['name'])
+    meta = {
+        **sc,
+        'candidates': [s['name'] for s in cand_specs],
+        'scene_dir': str(scene_dir),
+    }
+    (scene_dir / 'meta.json').write_text(
+        json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8',
+    )
+    return missing
 
 
 def cmd_materialize(cfg: dict, skip_ckpt: bool = True) -> None:
     out = Path(cfg['out_root'])
     scenes = _load_scenes(out)
     cand_specs = cfg['candidates']
-    # Pass 1: non-degrade; Pass 2: degrade (needs seed fusion in `built`)
-    pass1 = [s for s in cand_specs if s['type'] != 'degrade']
-    pass2 = [s for s in cand_specs if s['type'] == 'degrade']
 
     for sc in scenes:
-        scene_dir = out / 'scenes' / sc['scene_id']
-        root = Path(sc['root'])
-        name = sc['filename']
-        ir_src = root / 'ir' / name
-        vi_src = root / 'vi' / name
-        _copy_file(ir_src, scene_dir / 'ir' / name)
-        _copy_file(vi_src, scene_dir / 'vi' / name)
-        ir = _read_gray(ir_src)
-        vi = _read_gray(vi_src)
-        vi_bgr = cv2.imread(str(vi_src), cv2.IMREAD_COLOR)
-        built: dict[str, np.ndarray] = {'prior_max': _prior_max(ir, vi)}
-
-        for spec in pass1:
-            _build_one_candidate(spec, cfg, sc, name, ir, vi, vi_bgr, built, scene_dir)
-        for spec in pass2:
-            _build_one_candidate(spec, cfg, sc, name, ir, vi, vi_bgr, built, scene_dir)
-
-        meta = {
-            **sc,
-            'candidates': [s['name'] for s in cand_specs],
-            'scene_dir': str(scene_dir),
-        }
-        (scene_dir / 'meta.json').write_text(
-            json.dumps(meta, ensure_ascii=False, indent=2), encoding='utf-8',
-        )
+        materialize_one(cfg, sc)
 
     if skip_ckpt:
         print('[materialize] done (ckpt slots skipped by default)')
@@ -718,16 +728,395 @@ def cmd_sample_pairs(cfg: dict) -> None:
     print(f'[sample_pairs] {len(tasks)} ordinary tasks → {path}')
 
 
+def _safe_name(value: str, what: str) -> str:
+    name = (value or '').strip()
+    if not name or len(name) > 64 or any(not (ch.isalnum() or ch in '_-') for ch in name):
+        raise ValueError(f'{what} must be 1–64 characters: letters, digits, underscore, or hyphen')
+    return name
+
+
+def _append_jsonl(path: Path, rows: list[dict]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open('a', encoding='utf-8') as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + '\n')
+
+
+def _existing_pair_keys(out: Path) -> set[tuple[str, frozenset]]:
+    keys: set[tuple[str, frozenset]] = set()
+    path = out / 'pairs.jsonl'
+    if not path.is_file():
+        return keys
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        left, right = row.get('left'), row.get('right')
+        if left and right:
+            keys.add((str(row.get('scene_id') or ''), frozenset((left, right))))
+    return keys
+
+
+def _pairs_per_scene(cfg: dict) -> int:
+    if cfg.get('pairs_per_scene'):
+        return int(cfg['pairs_per_scene'])
+    gen = cfg.get('gen_eval') or {}
+    if gen.get('pairs_per_scene'):
+        return int(gen['pairs_per_scene'])
+    return 8
+
+
+def append_pairs_for_scenes(
+    cfg: dict,
+    scenes: list[dict],
+    *,
+    must_include: str | None = None,
+) -> list[dict]:
+    """Append comparisons for these scenes. Existing pair rows are left in place."""
+    out = Path(cfg['out_root'])
+    limit = _pairs_per_scene(cfg)
+    degrade = {c['name'] for c in cfg.get('candidates') or [] if c.get('type') == 'degrade'}
+    rng = random.Random(int(cfg.get('seed', 443)) + 99)
+    seen = _existing_pair_keys(out)
+    new_rows: list[dict] = []
+    for sc in scenes:
+        scene_dir = out / 'scenes' / sc['scene_id']
+        available = sorted(path.stem for path in (scene_dir / 'fusions').glob('*.png'))
+        pool = [
+            (a, b)
+            for i, a in enumerate(available)
+            for b in available[i + 1:]
+            if not (a in degrade and b in degrade)
+            and (must_include is None or must_include in (a, b))
+        ]
+        reference = {'prior_max', 'prior_mhf', 'deg_overexp', 'deg_underexp'}
+        involving_method = [pair for pair in pool if pair[0] not in reference or pair[1] not in reference]
+        reference_only = [pair for pair in pool if pair[0] in reference and pair[1] in reference]
+        rng.shuffle(involving_method)
+        rng.shuffle(reference_only)
+        pool = involving_method + reference_only
+        taken = 0
+        for a, b in pool:
+            if taken >= limit:
+                break
+            key = (sc['scene_id'], frozenset((a, b)))
+            if key in seen:
+                continue
+            left, right = (a, b) if rng.random() < 0.5 else (b, a)
+            new_rows.append({
+                'task_id': f'{sc["scene_id"]}::{left}__{right}',
+                'pair_id': f'{sc["scene_id"]}::{left}__{right}',
+                'scene_id': sc['scene_id'],
+                'split': sc.get('split', 'test'),
+                'dataset': sc.get('dataset', ''),
+                'ir': str(scene_dir / 'ir' / sc['filename']),
+                'vi': str(scene_dir / 'vi' / sc['filename']),
+                'left': left,
+                'right': right,
+                'left_path': str(scene_dir / 'fusions' / f'{left}.png'),
+                'right_path': str(scene_dir / 'fusions' / f'{right}.png'),
+                'is_gold': False,
+            })
+            seen.add(key)
+            taken += 1
+    _append_jsonl(out / 'pairs.jsonl', new_rows)
+    return new_rows
+
+
+def _reference_specs() -> list[dict]:
+    """Fusions that can be built from infrared and visible images alone."""
+    return [
+        {'name': 'prior_max', 'type': 'prior', 'mode': 'max'},
+        {'name': 'prior_mhf', 'type': 'prior', 'mode': 'm_hf', 'alpha': 1.0},
+        {'name': 'deg_overexp', 'type': 'degrade', 'seed': 'prior_max', 'mode': 'overexp', 'gain': 1.4},
+        {'name': 'deg_underexp', 'type': 'degrade', 'seed': 'prior_max', 'mode': 'underexp', 'gain': 1.4},
+    ]
+
+
+def _candidates_for_new_scenes(cfg: dict, fusion_root: Path | None) -> list[dict]:
+    """References first. Real methods are whatever the user actually supplied."""
+    specs: list[dict] = []
+    names: set[str] = set()
+
+    def add(spec: dict) -> None:
+        if spec['name'] in names:
+            return
+        names.add(spec['name'])
+        specs.append(dict(spec))
+
+    for spec in _reference_specs():
+        add(spec)
+    if fusion_root is not None:
+        for child in sorted(fusion_root.iterdir()):
+            if child.is_dir() and not child.name.startswith('.'):
+                add({'name': child.name, 'type': 'sota', 'dir': str(child)})
+        return specs
+    for spec in cfg.get('candidates') or []:
+        if spec.get('type') == 'sota':
+            add(dict(spec))
+    return specs
+
+
+def extend_scenes(
+    cfg: dict,
+    dataset: str,
+    source_root: Path,
+    fusion_root: Path | None = None,
+    config_path: Path | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Append scenes from a folder of ir/ and vi/. Existing scenes and labels stay."""
+    dataset = _safe_name(dataset, 'Dataset name')
+    source_root = Path(source_root).expanduser().resolve()
+    if not (source_root / 'ir').is_dir() or not (source_root / 'vi').is_dir():
+        raise ValueError(f'{source_root} must contain ir/ and vi/ with the same filenames')
+    if fusion_root is not None:
+        fusion_root = Path(fusion_root).expanduser().resolve()
+        if not fusion_root.is_dir():
+            raise ValueError(f'Fusion folder does not exist: {fusion_root}')
+    out = Path(cfg['out_root'])
+    existing = _load_scenes(out) if (out / 'scenes.jsonl').is_file() else []
+    known_ids = {row['scene_id'] for row in existing}
+    known_files = {(row.get('dataset'), row.get('filename')) for row in existing}
+    fresh = []
+    for name in list_paired_samples(source_root):
+        scene_id = f'{dataset}/{Path(name).stem}'
+        if scene_id in known_ids or (dataset, name) in known_files:
+            continue
+        fresh.append({
+            'scene_id': scene_id,
+            'source_dataset': dataset,
+            'source_scene_id': Path(name).stem,
+            'dataset': dataset,
+            'filename': name,
+            'root': str(source_root),
+            'scene_group': scene_id,
+        })
+    if not fresh:
+        return {
+            'added_scenes': 0,
+            'added_pairs': 0,
+            'task_ids': [],
+            'warnings': [],
+            'needs_confirm': False,
+            'note': 'Every paired image in that folder is already in this database.',
+        }
+    if not confirm:
+        return {
+            'added_scenes': len(fresh),
+            'added_pairs': 0,
+            'task_ids': [],
+            'warnings': [],
+            'needs_confirm': True,
+            'note': (
+                f'Found {len(fresh)} new scenes. Preparing them adds comparisons and does not '
+                'change existing labels. Click Add these images to continue.'
+            ),
+        }
+    work = dict(cfg)
+    work['_quiet'] = True
+    work['candidates'] = _candidates_for_new_scenes(cfg, fusion_root)
+    work.setdefault('datasets', {})
+    work['datasets'] = dict(work['datasets'])
+    work['datasets'].setdefault(dataset, {'root': str(source_root)})
+    _assign_splits(fresh, work)
+    warnings: list[str] = []
+    ready = []
+    missing_methods: set[str] = set()
+    supplied = [spec['name'] for spec in work['candidates'] if spec.get('type') == 'sota']
+    for sc in fresh:
+        try:
+            missing_methods.update(materialize_one(work, sc))
+        except Exception as exc:
+            warnings.append(f'{sc["scene_id"]}: {exc}')
+            continue
+        scene_dir = out / 'scenes' / sc['scene_id']
+        sc['ir'] = str(scene_dir / 'ir' / sc['filename'])
+        sc['vi'] = str(scene_dir / 'vi' / sc['filename'])
+        sc['scene_dir'] = str(scene_dir)
+        ready.append(sc)
+    _append_jsonl(out / 'scenes.jsonl', ready)
+    new_pairs = append_pairs_for_scenes(work, ready)
+    used = [name for name in supplied if name not in missing_methods]
+    if used:
+        method_sentence = f' Compared {", ".join(used)} with reference fusions built from the infrared and visible images.'
+    else:
+        method_sentence = ' Reference fusions were built from the infrared and visible images, so no fusion project was required.'
+    skipped = sorted(missing_methods)
+    if skipped:
+        method_sentence += f' Skipped methods with no files: {", ".join(skipped)}.'
+    note = (
+        f'Added {len(ready)} scenes and {len(new_pairs)} comparisons. '
+        'Earlier scenes and labels were kept.'
+        + method_sentence
+    )
+    if warnings:
+        note += ' ' + ' '.join(warnings[:6])
+    return {
+        'added_scenes': len(ready),
+        'added_pairs': len(new_pairs),
+        'task_ids': [row['task_id'] for row in new_pairs],
+        'warnings': warnings,
+        'needs_confirm': False,
+        'note': note,
+    }
+
+
+def _match_method_file(results_root: Path, scene: dict, scenes: list[dict]) -> Path | None:
+    filename = scene['filename']
+    dataset = str(scene.get('dataset') or '')
+    nested = _find_fusion_file(results_root / dataset, filename)
+    if nested is not None:
+        return nested
+    flat = _find_fusion_file(results_root, filename)
+    if flat is None:
+        return None
+    twins = [row for row in scenes if row.get('filename') == filename]
+    if len(twins) > 1:
+        return None
+    return flat
+
+
+def _remember_method(cfg: dict, method: str, config_path: Path | None) -> None:
+    specs = cfg.setdefault('candidates', [])
+    if any(spec.get('name') == method or spec.get('method') == method for spec in specs):
+        return
+    specs.append({'name': method, 'type': 'sota', 'method': method})
+    if config_path is not None and config_path.is_file():
+        saved = yaml.safe_load(config_path.read_text(encoding='utf-8')) or {}
+        saved_specs = list(saved.get('candidates') or [])
+        if not any(spec.get('name') == method or spec.get('method') == method for spec in saved_specs):
+            saved_specs.append({'name': method, 'type': 'sota', 'method': method})
+            saved['candidates'] = saved_specs
+            config_path.write_text(
+                yaml.safe_dump(saved, sort_keys=False, allow_unicode=True),
+                encoding='utf-8',
+            )
+
+
+def extend_method(
+    cfg: dict,
+    method: str,
+    results_root: Path,
+    config_path: Path | None = None,
+    confirm: bool = False,
+) -> dict:
+    """Copy one new method onto existing scenes and append its comparisons."""
+    method = _safe_name(method, 'Method name')
+    results_root = Path(results_root).expanduser().resolve()
+    if not results_root.is_dir():
+        raise ValueError(f'Results folder does not exist: {results_root}')
+    out = Path(cfg['out_root'])
+    scenes = _load_scenes(out) if (out / 'scenes.jsonl').is_file() else []
+    if not scenes:
+        raise ValueError(
+            'This database has no scenes yet. Add the infrared and visible images first. '
+            'A fusion project is optional.'
+        )
+    warnings: list[str] = []
+    updated: list[dict] = []
+    ambiguous = set()
+    for sc in scenes:
+        filename = sc.get('filename')
+        if not filename:
+            continue
+        twins = [row for row in scenes if row.get('filename') == filename]
+        nested = _find_fusion_file(results_root / str(sc.get('dataset') or ''), filename)
+        flat = _find_fusion_file(results_root, filename)
+        if nested is None and flat is not None and len(twins) > 1 and filename not in ambiguous:
+            ambiguous.add(filename)
+            warnings.append(
+                f'{filename} matches more than one scene. Put it in a subfolder named by dataset.'
+            )
+        src = _match_method_file(results_root, sc, scenes)
+        if src is None:
+            continue
+        if not confirm:
+            updated.append(sc)
+            continue
+        scene_dir = out / 'scenes' / sc['scene_id']
+        dst = scene_dir / 'fusions' / f'{method}.png'
+        raw = cv2.imread(str(src), cv2.IMREAD_COLOR)
+        if raw is None:
+            raw = cv2.imread(str(src), cv2.IMREAD_UNCHANGED)
+        if raw is None:
+            warnings.append(f'Could not read {src}')
+            continue
+        _write_img(dst, raw)
+        updated.append(sc)
+    if not updated:
+        raise ValueError(
+            'No result file matched an existing scene. Use the infrared filename, '
+            'or put files in subfolders named by dataset.'
+        )
+    if not confirm:
+        return {
+            'added_scenes': 0,
+            'added_method': method,
+            'added_pairs': 0,
+            'task_ids': [],
+            'warnings': warnings,
+            'needs_confirm': True,
+            'note': (
+                f'Found {method} results for {len(updated)} scenes. Preparing them adds '
+                'comparisons and does not change existing labels. Click Add these images to continue.'
+            ),
+        }
+    _remember_method(cfg, method, config_path)
+    bare = [
+        sc for sc in updated
+        if not any(
+            path.stem != method
+            for path in (out / 'scenes' / sc['scene_id'] / 'fusions').glob('*.png')
+        )
+    ]
+    if bare:
+        ref_cfg = dict(cfg)
+        ref_cfg['_quiet'] = True
+        ref_cfg['candidates'] = _reference_specs()
+        for sc in bare:
+            try:
+                materialize_one(ref_cfg, sc)
+            except Exception as exc:
+                warnings.append(f'{sc["scene_id"]}: {exc}')
+    new_pairs = append_pairs_for_scenes(cfg, updated, must_include=method)
+    note = (
+        f'Added method {method} on {len(updated)} scenes and {len(new_pairs)} comparisons. '
+        'Earlier comparisons and labels were kept.'
+    )
+    if bare:
+        note += ' Scenes without another method were compared with reference fusions built from the infrared and visible images.'
+    if warnings:
+        note += ' ' + ' '.join(warnings[:6])
+    return {
+        'added_scenes': 0,
+        'added_method': method,
+        'added_pairs': len(new_pairs),
+        'task_ids': [row['task_id'] for row in new_pairs],
+        'warnings': warnings,
+        'needs_confirm': False,
+        'note': note,
+    }
+
+
 def main() -> None:
     p = ArgumentParser(description=__doc__)
     p.add_argument(
         'stage',
         choices=[
             'make_gallery', 'serve_gallery', 'pick_cli', 'apply_selection',
-            'sample_scenes', 'materialize', 'sample_pairs', 'annotate', 'all_random',
+            'sample_scenes', 'materialize', 'sample_pairs', 'annotate', 'browse', 'all_random',
+            'extend_scenes', 'extend_method',
         ],
     )
     p.add_argument('--config', type=Path, required=True)
+    p.add_argument('--dataset-name', type=str, default=None, help='dataset name for extend_scenes')
+    p.add_argument('--source', type=Path, default=None, help='folder with ir/ and vi/ for extend_scenes')
+    p.add_argument('--fusion', type=Path, default=None, help='optional method folders for extend_scenes')
+    p.add_argument('--method', type=str, default=None, help='method name for extend_method')
+    p.add_argument('--results', type=Path, default=None, help='fusion files for extend_method')
     p.add_argument('--dataset', type=str, default=None, help='dataset for make_gallery / pick_cli')
     p.add_argument(
         '--selection', type=Path, action='append', default=[],
@@ -760,6 +1149,18 @@ def main() -> None:
         cmd_materialize(cfg, skip_ckpt=skip_ckpt)
     elif args.stage == 'sample_pairs':
         cmd_sample_pairs(cfg)
+    elif args.stage == 'extend_scenes':
+        if not args.dataset_name or args.source is None:
+            raise SystemExit('extend_scenes requires --dataset-name and --source')
+        info = extend_scenes(
+            cfg, args.dataset_name, args.source, args.fusion, config_path=args.config, confirm=True,
+        )
+        print(f'[extend_scenes] {info["note"]}')
+    elif args.stage == 'extend_method':
+        if not args.method or args.results is None:
+            raise SystemExit('extend_method requires --method and --results')
+        info = extend_method(cfg, args.method, args.results, config_path=args.config, confirm=True)
+        print(f'[extend_method] {info["note"]}')
     elif args.stage == 'annotate':
         # Delegate to annotate.py (long-running server).
         cmd = [
@@ -771,6 +1172,13 @@ def main() -> None:
             cmd.extend(['--annotator', args.annotator])
         if args.split:
             cmd.extend(['--split', args.split])
+        raise SystemExit(subprocess.call(cmd))
+    elif args.stage == 'browse':
+        cmd = [
+            sys.executable, str(Path(__file__).resolve().parent / 'browse_labels.py'),
+            '--config', str(args.config),
+            '--port', str(args.port if args.port != 8765 else 8767),
+        ]
         raise SystemExit(subprocess.call(cmd))
     elif args.stage == 'all_random':
         cmd_sample_scenes(cfg)

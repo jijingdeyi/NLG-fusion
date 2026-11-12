@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Frozen HPFM vs LPIFM on the expanded RoadScene v2 pack.
+"""Frozen HPFM vs LPIFM on the RoadScene transfer pack.
 
 Reads aggregated supervision. Does not train, and does not change thresholds.
 """
@@ -19,9 +19,8 @@ from torch.utils.data import DataLoader, Dataset
 
 ROOT = Path("/home/ykx/NLG-fusion")
 LPIFM_ROOT = Path("/home/ykx/LPIFM")
-PACK = Path("/data/ykx/pref_bench_roadscene_v2")
-OLD_PACK = Path("/data/ykx/pref_bench_roadscene")
-OUT = Path("/home/ykx/NLG-fusion/results/lpifm_hpfm_comparison/roadscene_v2")
+PACK = Path("/data/ykx/pref_bench_roadscene")
+OUT = Path("/home/ykx/NLG-fusion/results/lpifm_hpfm_comparison/roadscene")
 HPFM_CKPT = Path("/data/ykx/pref_bench/fit/scorer_stage1_best.pt")
 LPIFM_CKPT = LPIFM_ROOT / "checkpoints/lpifm_vifb_baseline_v1.pt"
 LPIFM_YAML = LPIFM_ROOT / "configs/release_inference.yaml"
@@ -205,7 +204,6 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("device", device, flush=True)
     rows = load_jsonl(PACK / "supervision.jsonl")
-    old_ids = {row["pair_id"] for row in load_jsonl(OLD_PACK / "pairs.jsonl")}
     for row in rows:
         for key in ("ir", "vi", "path_a", "path_b"):
             if not Path(row[key]).is_file():
@@ -243,7 +241,7 @@ def main() -> None:
         hit_b_h = int(decisive and h_pred == human)
         hit_b_l = int(decisive and forced == human)
         records.append({
-            "source_db": "pref_bench_roadscene_v2",
+            "source_db": "pref_bench_roadscene",
             "protocol": row["pair_id"].split("::", 1)[0],
             "dataset": row["dataset"],
             "scene_id": row["scene_id"],
@@ -261,7 +259,6 @@ def main() -> None:
             "q_A": q,
             "q_kind": kind,
             "decisive": decisive,
-            "in_original_pack": row["pair_id"] in old_ids,
             "human_side": human if decisive else "",
             "hpfm_source": f"frozen:{HPFM_CKPT}",
             "hpfm_s_a": s_a,
@@ -291,10 +288,7 @@ def main() -> None:
     summaries = []
     for protocol in ("e1", "e2"):
         block = [row for row in records if row["protocol"] == protocol]
-        paper = "0.812" if protocol == "e1" else "0.694"
-        summaries.append(summarize(protocol, "v2_full", block, ""))
-        original = [row for row in block if row["in_original_pack"]]
-        summaries.append(summarize(protocol, "original_ids", original, paper))
+        summaries.append(summarize(protocol, "full", block, ""))
     sum_fields = list(summaries[0])
     with (OUT / "summary.csv").open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=sum_fields)
@@ -319,13 +313,11 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(half_rows)
 
-    lines = ["# RoadScene v2 frozen HPFM vs LPIFM", ""]
+    lines = ["# RoadScene frozen HPFM vs LPIFM", ""]
     lines.append(f"Device: {device}. LPIFM state dict: {variant}.")
     lines.append(f"Pack: {PACK}. HPFM: {HPFM_CKPT}. LPIFM: {LPIFM_CKPT}.")
     lines.append("Decisive means q_A <= 0.4 or q_A >= 0.6. q_A=0.5 stays out of the denominator.")
     lines.append("Protocol A keeps LPIFM ties as misses. Protocol B forces the sign of d_cal; exact zero predicts A.")
-    lines.append("original_ids uses pair ids from the previous 30-scene pack and the updated aggregated labels.")
-    lines.append("paper_hpfm on that subset is the published reference, not a number to force.")
     lines.append("")
     for row in summaries:
         lines.append(

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Classical IVIF metrics on the expanded RoadScene v2 labels.
+"""Classical IVIF metrics on the RoadScene transfer labels.
 
 Uses the same metric functions as the paper (pref.fusion_metrics at HEAD)
 and the same entropy used for EN. Higher value predicts that side.
@@ -20,10 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-PACK = Path("/data/ykx/pref_bench_roadscene_v2")
-OLD_PACK = Path("/data/ykx/pref_bench_roadscene")
-OLD_PRED = Path("/home/ykx/NLG-fusion/results/lpifm_hpfm_comparison/predictions.csv")
-OUT = Path("/home/ykx/NLG-fusion/results/lpifm_hpfm_comparison/roadscene_v2")
+PACK = Path("/data/ykx/pref_bench_roadscene")
+OUT = Path("/home/ykx/NLG-fusion/results/lpifm_hpfm_comparison/roadscene")
 PRED = OUT / "predictions.csv"
 VENDOR = Path("/tmp/paper_metrics")
 SEED = 443
@@ -196,22 +194,10 @@ def main() -> None:
             if row["decisive"] == "True":
                 hpfm[row["pair_id"]] = int(row["hit_A_hpfm"])
 
-    old_rows = load_jsonl(OLD_PACK / "supervision.jsonl")
-    old_ids = {row["pair_id"] for row in old_rows}
-    paper_hpfm = {}
-    with OLD_PRED.open(encoding="utf-8") as handle:
-        for row in csv.DictReader(handle):
-            if row["source_db"] == "pref_bench_roadscene" and row["decisive"] == "True":
-                paper_hpfm[row["pair_id"]] = int(row["hit_A_hpfm"])
     summaries = []
     for protocol in ("e1", "e2"):
         block = [row for row in rows if row["pair_id"].startswith(protocol + "::")]
-        summaries.extend(evaluate(protocol, "v2_full", block, scores, hpfm))
-        original = [row for row in block if row["pair_id"] in old_ids]
-        # HPFM hits for original ids are in the v2 predictions.
-        summaries.extend(evaluate(protocol, "original_ids", original, scores, hpfm))
-        old_block = [row for row in old_rows if row["pair_id"].startswith(protocol + "::")]
-        summaries.extend(evaluate(protocol, "paper_labels", old_block, scores, paper_hpfm))
+        summaries.extend(evaluate(protocol, "full", block, scores, hpfm))
 
     fields = list(summaries[0])
     with (OUT / "metric_summary.csv").open("w", encoding="utf-8", newline="") as handle:
@@ -219,20 +205,13 @@ def main() -> None:
         writer.writeheader()
         writer.writerows(summaries)
     for row in summaries:
-        if row["subset"] == "paper_labels":
-            print(
-                f"paper {row['protocol']} {row['metric']} {row['correct']}/{row['n']} "
-                f"{row['agreement']:.3f} ties {row['metric_ties']}",
-                flush=True,
-            )
-        elif row["subset"] == "v2_full":
-            print(
-                f"v2 {row['protocol']} {row['metric']} {row['correct']}/{row['n']} "
-                f"{row['agreement']:.3f} diff {row['diff_pp']:.2f} "
-                f"[{row['diff_ci95_low_pp']:.2f}, {row['diff_ci95_high_pp']:.2f}] "
-                f"best {row['best_on_subset']}",
-                flush=True,
-            )
+        print(
+            f"{row['protocol']} {row['metric']} {row['correct']}/{row['n']} "
+            f"{row['agreement']:.3f} diff {row['diff_pp']:.2f} "
+            f"[{row['diff_ci95_low_pp']:.2f}, {row['diff_ci95_high_pp']:.2f}] "
+            f"best {row['best_on_subset']}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":

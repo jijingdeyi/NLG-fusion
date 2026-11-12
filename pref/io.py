@@ -99,6 +99,36 @@ def load_annotators(out_root: Path | str, cfg: Mapping | None = None) -> dict[st
     return expertise
 
 
+def _drop_superseded(
+    rows: list[tuple[str, str, Label, dict]],
+) -> list[tuple[str, str, Label, dict]]:
+    """Drop votes that a later correction from the same person replaced.
+
+    A correction lists its own earlier annotation ids. It cannot remove
+    another person's vote. Rounds without ``supersedes`` all still count.
+    """
+    owners: dict[str, str] = {}
+    for _pid, aid, _lab, row in rows:
+        ann_id = str(row.get('annotation_id') or '')
+        if ann_id:
+            owners[ann_id] = str(aid)
+    gone: set[str] = set()
+    for _pid, aid, _lab, row in rows:
+        for old in row.get('supersedes') or []:
+            old_id = str(old)
+            if owners.get(old_id) == str(aid):
+                gone.add(old_id)
+    if not gone:
+        return rows
+    kept = []
+    for item in rows:
+        ann_id = str(item[3].get('annotation_id') or '')
+        if ann_id and ann_id in gone:
+            continue
+        kept.append(item)
+    return kept
+
+
 def iter_legacy_annotations(
     out_root: Path | str,
     pairs: Mapping[str, dict] | None = None,
@@ -107,7 +137,7 @@ def iter_legacy_annotations(
     """Load annotations as (pair_id, annotator_id, label, raw_row).
 
     Prefer canonical `annotations.jsonl` if present; else fall back to labels_*.jsonl.
-    Keeps every annotation (multi-round).
+    Keeps every annotation, except votes a later correction from the same person replaced.
     """
     out = Path(out_root)
     pairs = pairs or load_pairs(out)
@@ -130,7 +160,7 @@ def iter_legacy_annotations(
                     'right': row.get('right_candidate') or row.get('right'),
                 })
             rows.append((pid, aid, lab, row))  # type: ignore[arg-type]
-        return rows
+        return _drop_superseded(rows)
 
     files = sorted(out.glob('labels_*.jsonl')) if annotator is None else [out / f'labels_{annotator}.jsonl']
     for fp in files:
@@ -146,7 +176,7 @@ def iter_legacy_annotations(
             if lab not in ('A', 'Tie', 'B'):
                 lab = label_from_legacy_row(pair, row)
             rows.append((pair.get('pair_id', tid), ann_id, lab, row))  # type: ignore[arg-type]
-    return rows
+    return _drop_superseded(rows)
 
 
 def build_supervision(

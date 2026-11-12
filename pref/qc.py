@@ -278,7 +278,7 @@ def recommend_review(
         'cycle_scenes': kept_scenes,
         'n_cycle_edges': len(cycle_pairs),
         'n_low_R': n_low_in,
-        'note': '；'.join(note[r] for r in reasons if r in note),
+        'note': '; '.join(note[r] for r in reasons if r in note),
     }
 
 

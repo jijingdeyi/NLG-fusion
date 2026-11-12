@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""Expand the RoadScene E1/E2 pack to 40 scenes x 6 pairs per protocol.
+"""Build the RoadScene transfer pack.
 
-The original 30 annotated test scenes and their 180 labels stay as they are.
-The 10 added scenes are RoadScene training images. RoadScene was not used to
-train HPFM, and these files are not in the numbered RoadScene test split.
-Each new scene has the four seen methods (E1) and the four unseen methods (E2).
-New pairs have no labels.
+The finished pack is /data/ykx/pref_bench_roadscene: 40 scenes and 480 pairs.
+Re-running would overwrite those labels, so main() refuses to continue.
 """
 
 from __future__ import annotations
@@ -19,7 +16,7 @@ from pathlib import Path
 import cv2
 
 OLD = Path("/data/ykx/pref_bench_roadscene")
-NEW = Path("/data/ykx/pref_bench_roadscene_v2")
+NEW = Path("/data/ykx/pref_bench_roadscene")
 SRC = Path("/data/ykx/rs_train_add")
 FUSION = Path("/data/ykx/sota/rs_train_add")
 TRAIN_LIST = Path("/data/ykx/RoadScene/meta/train.txt")
@@ -81,7 +78,7 @@ def choose_scenes() -> list[dict]:
             "dataset": "RoadScene",
             "filename": name,
             "stem": stem,
-            "split": "train",
+            "split": "test",
             "scene_group": f"RoadScene/{stem}",
             "ir": ir,
             "vi": vi,
@@ -137,7 +134,7 @@ def scene_record(scene: dict) -> dict:
         "filename": scene["filename"],
         "root": str(SRC),
         "scene_dir": str(scene_dir),
-        "split": "train",
+        "split": "test",
         "scene_group": scene["scene_group"],
         "ir": str(scene_dir / "ir" / scene["filename"]),
         "vi": str(scene_dir / "vi" / scene["filename"]),
@@ -177,6 +174,10 @@ def make_pair(protocol: str, scene: dict, left: str, right: str) -> dict:
 
 
 def main() -> None:
+    raise SystemExit(
+        "RoadScene is already built at /data/ykx/pref_bench_roadscene "
+        "(40 scenes, 480 pairs)."
+    )
     if NEW.exists():
         raise SystemExit(f"refusing to overwrite {NEW}")
     added = choose_scenes()
@@ -258,12 +259,12 @@ def main() -> None:
         encoding="utf-8",
     )
     manifest = {
-        "name": "pref_bench_roadscene_v2",
+        "name": "pref_bench_roadscene",
         "based_on": str(OLD),
         "n_scenes": len(scenes),
         "n_original_roadscene_scenes": len(old_scenes),
         "added_scenes": [scene["scene_id"] for scene in added],
-        "added_scene_source": "RoadScene train split; dataset was not used in HPFM training",
+        "added_scene_source": "Images taken from the RoadScene training list. The whole pack is a test set and was not used in HPFM training.",
         "e1_seen_methods": list(E1),
         "e2_unseen_methods": list(E2),
         "n_pairs_e1": sum(row["protocol"] == "e1" for row in pairs),

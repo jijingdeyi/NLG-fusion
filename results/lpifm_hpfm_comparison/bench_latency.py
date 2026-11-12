@@ -29,7 +29,7 @@ from lpifm.inference import _ensure_rgb, load_frozen_model  # noqa: E402
 from pref.dataset import load_triple  # noqa: E402
 from pref.model.resnet_scorer import ResNet18ScalarScorer  # noqa: E402
 
-SCENE = Path("/data/ykx/pref_bench_roadscene_v2/scenes/RoadScene/1")
+SCENE = Path("/data/ykx/pref_bench_roadscene/scenes/RoadScene/1")
 HPFM_CKPT = Path("/data/ykx/pref_bench/fit/scorer_stage1_best.pt")
 LPIFM_CKPT = LPIFM_ROOT / "checkpoints/lpifm_vifb_baseline_v1.pt"
 LPIFM_YAML = LPIFM_ROOT / "configs/release_inference.yaml"

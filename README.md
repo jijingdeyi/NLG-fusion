@@ -10,7 +10,7 @@ for infrared–visible image fusion (IVIF).
 |------|------|
 | [`hpfm/`](hpfm/) | Pip-installable metric (weights included) |
 | [`pref/`](pref/) | Library for build / annotate / aggregate / train |
-| [`scripts/pref_bench/`](scripts/pref_bench/) | CLI: build → annotate → aggregate → train |
+| [`scripts/pref_bench/`](scripts/pref_bench/) | CLI: build → annotate → aggregate → browse → train |
 | [`checkpoints/`](checkpoints/) | Released Stage-1 weights (same as in `hpfm`) |
 
 ## Setup
@@ -94,8 +94,14 @@ python scripts/pref_bench/annotate.py \
   --port 8766
 ```
 
-Open `http://127.0.0.1:8766`. Labels append to JSONL under `out_root` (resume-safe).
-Use `--allow-reannotate` for multi-round labels on the same pair.
+Open `http://127.0.0.1:8766`. Choose a database, then a task. Back or Escape returns to that menu.
+
+- **New annotation** writes a first label on pairs this user has not judged. The same screen can add scenes from a folder with `ir/` and `vi/`, or add one method from a results folder. Infrared and visible images are enough: reference fusions are built automatically, and missing method projects are skipped. It appends comparisons and keeps existing labels. Do not re-run `sample_scenes` or `sample_pairs` on a database that already has labels; those commands rewrite the lists.
+- **Re-annotate: routine check** reviews preference-cycle edges first. If there is no cycle, it takes a small set of the least reliable pairs, or a random sample when reliability does not vary.
+- **Re-annotate: model disagreements** reviews decisive labels where the trained scorer gives the other candidate probability above 0.6.
+- **View labeled results** shows the aggregated preference, with A and B as the stored candidates. RoadScene is filtered as seen methods (E1) and unseen methods (E2). Dataset and method filters narrow the list. **Re-annotate this pair** appends one more vote on the open pair. Earlier votes stay and are counted together.
+
+Earlier labels are kept. Labels append to JSONL under the chosen database (resume-safe). A `browse_packs` entry whose directory contains `pairs.jsonl` is an additional database, not only a view.
 
 ---
 
@@ -110,7 +116,23 @@ Writes `supervision.jsonl` (soft \(y\), reliability \(R\)) for training.
 
 ---
 
-## 5) Train Stage-1 scorer
+## 5) Review labeled pairs
+
+```bash
+python scripts/pref_bench/browse_labels.py \
+  --config /path/to/pref_bench/config.yaml \
+  --port 8767
+```
+
+Open `http://127.0.0.1:8767`. The page is read-only and shows IR, VI, and the two
+stored candidates. A and B follow `supervision.jsonl`, not the left/right order
+used while annotating. Arrow keys move between pairs. Another aggregated file
+can be added with `--extra name=/path/to/supervision.jsonl`, or under
+`browse_packs` in the config. The same server is `build.py browse`.
+
+---
+
+## 6) Train Stage-1 scorer
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 python scripts/pref_bench/train_scorer_stage1.py \
@@ -130,6 +152,7 @@ Copy/sync into `checkpoints/` and `hpfm` as needed.
 | `build.py` | Build scenes / candidates / sample pairs |
 | `annotate.py` | Browser pairwise annotation UI |
 | `aggregate_preferences.py` | Aggregate labels → soft targets |
+| `browse_labels.py` | Read-only browser for labeled pairs |
 | `train_scorer_stage1.py` | Train ResNet-18 preference scorer |
 | `config.example.yaml` | Config template |
 

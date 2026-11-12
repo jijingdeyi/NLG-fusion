@@ -6,6 +6,12 @@
 # Layout expected under out_root after build + annotate:
 #   scenes.jsonl  pairs.jsonl  annotations.jsonl  labels_*.jsonl
 #   supervision.jsonl  candidates.jsonl  annotators.jsonl  fit/
+#
+# Optional extra packs for browse_labels.py. Each path is a supervision.jsonl.
+# browse_packs:
+#   - id: holdout
+#     label: Hold-out pack
+#     path: /path/to/other/supervision.jsonl
 
 seed: 443
 
