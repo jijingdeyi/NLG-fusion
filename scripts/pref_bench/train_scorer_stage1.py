@@ -1,13 +1,8 @@
 #!/usr/bin/env python3
-"""Train source-input / leave-one-method-out ablations for Stage-1 scorer.
+"""Train the baseline scorer: YCbCr color, full tile cover, vote-share target.
 
-  # source ablation (3 jobs; full IR+VIS+F already in scorer_stage1_best.pt)
   CUDA_VISIBLE_DEVICES=0 python scripts/pref_bench/train_scorer_stage1.py \\
-      --config /path/to/pref_bench/config.yaml --gpu 0 --input-mode f_only
-
-  # leave-one-method-out
-  CUDA_VISIBLE_DEVICES=1 python scripts/pref_bench/train_scorer_stage1.py \\
-      --config /path/to/pref_bench/config.yaml --gpu 1 --holdout-method method_a
+      --config /path/to/pref_bench/config.yaml --gpu 0
 """
 
 from __future__ import annotations

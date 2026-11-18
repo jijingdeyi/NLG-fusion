@@ -1,4 +1,4 @@
-"""Pair dataset that yields (x_A, x_B, y, R) (score.md §4.1 / §4.4).
+"""Pair datasets for the released grayscale loader and the baseline scorer.
 
 Training samples are pair-level only: Annotations are never expanded into
 duplicate training rows — they only determine (y, R) upstream.
@@ -87,6 +87,29 @@ def geometric_augment(
     return x_a, x_b
 
 
+def load_gray_native(path: str | Path) -> torch.Tensor:
+    """Full-resolution grayscale, shape (1, H, W), float in [0, 1]."""
+    from PIL import Image
+    from torchvision.transforms.functional import pil_to_tensor
+
+    with Image.open(path) as image:
+        return pil_to_tensor(image.convert('L')).float() / 255.0
+
+
+def load_ycbcr_native(path: str | Path) -> torch.Tensor:
+    """Y, Cb, Cr. Y is the grayscale image; Cb and Cr come from PIL YCbCr."""
+    from PIL import Image
+    from torchvision.transforms.functional import pil_to_tensor
+
+    with Image.open(path) as image:
+        rgb = image.convert('RGB')
+        y = pil_to_tensor(rgb.convert('L')).float() / 255.0
+        converted = rgb.convert('YCbCr')
+        cb = pil_to_tensor(converted.getchannel('Cb')).float() / 255.0
+        cr = pil_to_tensor(converted.getchannel('Cr')).float() / 255.0
+    return torch.cat([y, cb, cr], dim=0)
+
+
 def is_control_pair(row: dict) -> bool:
     """Obvious degradation / gold controls — useful but must not dominate batches."""
     if row.get('is_gold'):
@@ -152,6 +175,30 @@ class PreferencePairDataset(Dataset):
         return weights
 
 
+class BaselinePairDataset(PreferencePairDataset):
+    """Native IR gray and YCbCr visible / fusion. Augment is a shared horizontal flip."""
+
+    def __getitem__(self, idx: int):
+        row = self.rows[idx]
+        ir = load_gray_native(row['ir'])
+        vi = load_ycbcr_native(row['vi'])
+        fused_a = load_ycbcr_native(row['path_a'])
+        fused_b = load_ycbcr_native(row['path_b'])
+        if self.augment and torch.rand(()) < 0.5:
+            ir, vi, fused_a, fused_b = [image.flip(-1) for image in (ir, vi, fused_a, fused_b)]
+        y = torch.tensor([row['y_A'], row['y_T'], row['y_B']], dtype=torch.float32)
+        reliability = torch.tensor(float(row['R']), dtype=torch.float32)
+        return ir, vi, fused_a, fused_b, y, reliability
+
+
+def baseline_collate(batch):
+    ir, vi, fused_a, fused_b, y, reliability = zip(*batch)
+    return (
+        list(ir), list(vi), list(fused_a), list(fused_b),
+        torch.stack(y), torch.stack(reliability),
+    )
+
+
 def make_scene_loader(
     ds: PreferencePairDataset,
     batch_size: int,
@@ -160,13 +207,14 @@ def make_scene_loader(
     num_workers: int = 2,
     control_downweight: float = 0.35,
     seed: int = 443,
+    collate_fn=None,
 ) -> torch.utils.data.DataLoader:
     from torch.utils.data import DataLoader
 
     if not shuffle or len(ds) == 0:
         return DataLoader(
             ds, batch_size=batch_size, shuffle=False,
-            num_workers=num_workers, pin_memory=True,
+            num_workers=num_workers, pin_memory=True, collate_fn=collate_fn,
         )
     weights = ds.scene_sample_weights(control_downweight=control_downweight)
     sampler = WeightedRandomSampler(
@@ -177,5 +225,5 @@ def make_scene_loader(
     )
     return DataLoader(
         ds, batch_size=batch_size, sampler=sampler,
-        num_workers=num_workers, pin_memory=True,
+        num_workers=num_workers, pin_memory=True, collate_fn=collate_fn,
     )

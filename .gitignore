@@ -96,3 +96,6 @@ paper/**/*.blg
 # Scratch notes
 experiments.md
 score_baselines.md
+
+# Local experiment handoff (not part of the public repo)
+server_handoff_20261112_v3/

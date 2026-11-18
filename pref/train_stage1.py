@@ -1,7 +1,7 @@
-"""Stage-1 training: pairwise soft ranking → shared scalar scorer → s_F.
+"""Train the baseline scorer on vote-share preferences.
 
-Does NOT train σ / A-Tie-B heads. Goal: show that (y, R) preferences alone
-can produce a meaningful continuous score on unseen scenes.
+The model reads infrared as gray and visible and fusion as Y, Cb, Cr, then
+scores a 224 view of the whole image together with a complete cover of tiles.
 """
 
 from __future__ import annotations
@@ -14,11 +14,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from pref.dataset import PreferencePairDataset, make_scene_loader
+from pref.dataset import BaselinePairDataset, baseline_collate, make_scene_loader
 from pref.graph import connectivity_report
 from pref.io import export_supervision_jsonl, load_jsonl, load_yaml, resolve_pack_paths
-from pref.model.loss import scorer_rank_loss
-from pref.model.resnet_scorer import ResNet18ScalarScorer
+from pref.model.baseline import BaselineScorer
 
 
 def set_seed(seed: int) -> None:
@@ -30,7 +29,7 @@ def set_seed(seed: int) -> None:
 
 
 def _build_optimizer(
-    model: ResNet18ScalarScorer,
+    model: BaselineScorer,
     *,
     lr_head: float,
     lr_backbone: float,
@@ -44,6 +43,28 @@ def _build_optimizer(
     return torch.optim.AdamW(params, weight_decay=weight_decay)
 
 
+def _freeze_batchnorm(model: torch.nn.Module) -> None:
+    for module in model.modules():
+        if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+            module.eval()
+
+
+def _vote_share(y: torch.Tensor) -> torch.Tensor:
+    return y[:, 0] + 0.5 * y[:, 1]
+
+
+def _pair_loss(score_a: torch.Tensor, score_b: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.nn.functional.binary_cross_entropy_with_logits(score_a - score_b, target)
+
+
+def _score_fusion(model, ir, vi, fused, device) -> torch.Tensor:
+    return model(
+        ir.unsqueeze(0).to(device),
+        vi.unsqueeze(0).to(device),
+        fused.unsqueeze(0).to(device),
+    ).reshape(())
+
+
 @torch.no_grad()
 def eval_rank(
     model: torch.nn.Module,
@@ -51,42 +72,33 @@ def eval_rank(
     device: str,
     tau: float = 1.0,
 ) -> dict:
+    del tau
     model.eval()
     total_loss = 0.0
-    total_w = 0.0
     n_dec = 0
-    n_dec_ok = 0
-    n_soft_ok = 0
+    n_dec_ok = 0.0
+    n_soft_ok = 0.0
     n = 0
-    for x_a, x_b, y, R in loader:
-        x_a = x_a.to(device)
-        x_b = x_b.to(device)
+    for irs, vis, fused_as, fused_bs, y, _reliability in loader:
         y = y.to(device)
-        R = R.to(device)
-        loss, stats = scorer_rank_loss(
-            model, x_a, x_b, y, R, tau=tau, swap_prob=0.0, use_R=False,
-        )
-        bs = x_a.size(0)
-        # recompute decisive stats with R weighting for reporting
-        s_a = model(x_a)
-        s_b = model(x_b)
-        if isinstance(s_a, tuple):
-            s_a, s_b = s_a[0], s_b[0]
-        q = y[:, 0] + 0.5 * y[:, 1]
-        q_hat = torch.sigmoid((s_a - s_b) / float(tau))
-        decisive = (q - 0.5).abs() >= 0.1
-        soft_ok = ((q_hat >= 0.5) == (q >= 0.5)).float()
-        n_soft_ok += float(soft_ok.sum())
-        if decisive.any():
-            n_dec += int(decisive.sum())
-            n_dec_ok += int((((q_hat[decisive] >= 0.5) == (q[decisive] >= 0.5))).sum())
-        wsum = float(R.sum().clamp_min(1e-8))
-        total_loss += float(loss) * wsum
-        total_w += wsum
-        n += bs
+        q = _vote_share(y)
+        scores_a, scores_b = [], []
+        for ir, vi, fused_a, fused_b in zip(irs, vis, fused_as, fused_bs):
+            scores_a.append(_score_fusion(model, ir, vi, fused_a, device))
+            scores_b.append(_score_fusion(model, ir, vi, fused_b, device))
+        score_a = torch.stack(scores_a)
+        score_b = torch.stack(scores_b)
+        total_loss += float(_pair_loss(score_a, score_b, q).detach()) * len(q)
+        decisive = (q <= 0.4) | (q >= 0.6)
+        credit = ((score_a > score_b) == (q > 0.5)).float()
+        credit[score_a == score_b] = 0.5
+        n_dec += int(decisive.sum())
+        n_dec_ok += float(credit[decisive].sum())
+        n_soft_ok += float(((score_a >= score_b) == (q >= 0.5)).float().sum())
+        n += len(q)
     return {
         'n': n,
-        'loss': total_loss / total_w if total_w else float('nan'),
+        'loss': total_loss / n if n else float('nan'),
         'acc_soft': n_soft_ok / n if n else float('nan'),
         'acc_decisive': (n_dec_ok / n_dec) if n_dec else float('nan'),
         'n_decisive': n_dec,
@@ -197,7 +209,7 @@ def train_scorer_stage1(
         f'lomo_{holdout_method}' if holdout_method else
         (
             f'matched_n{matched_train_size}' if matched_train_size is not None else
-            (f'in_{input_mode}' if input_mode != 'ir_vis_f' else 'stage1')
+            (f'in_{input_mode}' if input_mode != 'ir_vis_f' else 'baseline')
         )
     )
 
@@ -213,26 +225,31 @@ def train_scorer_stage1(
         flush=True,
     )
 
-    train_ds = PreferencePairDataset(
+    if input_mode != 'ir_vis_f':
+        raise SystemExit(
+            'The baseline reads infrared as gray and visible and fusion as Y, Cb, Cr.'
+        )
+    if size != 224:
+        raise SystemExit('The global view and the tile size stay 224.')
+    train_ds = BaselinePairDataset(
         train_rows, size=size, augment=True, exclude_gold=True, exclude_control=False,
-        input_mode=input_mode,
     )
-    val_ds = PreferencePairDataset(
+    val_ds = BaselinePairDataset(
         val_rows, size=size, augment=False, exclude_gold=True, exclude_control=False,
-        input_mode=input_mode,
     )
     if len(train_ds) == 0:
         raise SystemExit(f'no train pairs with supervision under {out}')
 
     train_loader = make_scene_loader(
         train_ds, batch_size, shuffle=True, num_workers=num_workers,
-        control_downweight=control_downweight, seed=seed,
+        control_downweight=control_downweight, seed=seed, collate_fn=baseline_collate,
     )
     val_loader = make_scene_loader(
         val_ds, batch_size, shuffle=False, num_workers=num_workers,
+        collate_fn=baseline_collate,
     )
 
-    model = ResNet18ScalarScorer(pretrained=pretrained, freeze_backbone=True).to(device)
+    model = BaselineScorer(pretrained=pretrained, global_size=size, tile_size=size).to(device)
     opt = _build_optimizer(
         model, lr_head=lr_head, lr_backbone=lr_backbone,
         weight_decay=weight_decay, backbone_trainable=False,
@@ -258,18 +275,26 @@ def train_scorer_stage1(
             print(f'[stage1:{tag}] unfreeze backbone at epoch {epoch}', flush=True)
 
         model.train()
+        _freeze_batchnorm(model)
         running = 0.0
         n = 0
-        for x_a, x_b, y, R in train_loader:
-            x_a, x_b, y, R = x_a.to(device), x_b.to(device), y.to(device), R.to(device)
-            loss, _ = scorer_rank_loss(
-                model, x_a, x_b, y, R, tau=tau, swap_prob=0.5, use_R=False,
-            )
+        for irs, vis, fused_as, fused_bs, y, _reliability in train_loader:
+            y = y.to(device)
+            q = _vote_share(y)
+            if random.random() < 0.5:
+                fused_as, fused_bs, q = fused_bs, fused_as, 1.0 - q
             opt.zero_grad(set_to_none=True)
-            loss.backward()
+            parts = []
+            for ir, vi, fused_a, fused_b, target in zip(irs, vis, fused_as, fused_bs, q):
+                score_a = _score_fusion(model, ir, vi, fused_a, device)
+                score_b = _score_fusion(model, ir, vi, fused_b, device)
+                part = _pair_loss(score_a.reshape(1), score_b.reshape(1), target.reshape(1))
+                (part / len(q)).backward()
+                parts.append(part.detach())
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
-            running += float(loss.detach()) * x_a.size(0)
-            n += x_a.size(0)
+            running += float(torch.stack(parts).mean()) * len(q)
+            n += len(q)
         train_loss = running / max(n, 1)
         val_stats = eval_rank(model, val_loader, device, tau=tau) if len(val_ds) else {
             'n': 0, 'loss': float('nan'), 'acc_soft': float('nan'),
@@ -293,7 +318,7 @@ def train_scorer_stage1(
             'epoch': epoch,
             'model': model.state_dict(),
             'stage': 1,
-            'arch': 'resnet18_scalar',
+            'arch': 'baseline_ycbcr_tiles',
             'tau': tau,
             'size': size,
             'pretrained': pretrained,
@@ -331,6 +356,8 @@ def train_scorer_stage1(
             'lr_backbone': lr_backbone,
             'size': size,
             'tau': tau,
+            'target': 'vote_share',
+            'model': 'baseline_ycbcr_tiles',
             'control_downweight': control_downweight,
             'input_mode': input_mode,
             'holdout_method': holdout_method,

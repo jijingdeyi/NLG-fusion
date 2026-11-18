@@ -3,10 +3,10 @@
 
   python scripts/pref_bench/annotate.py --config /path/to/pref_bench/config.yaml --port 8766
 
-Open the page, choose a database, then new annotation, a recommended
-re-annotation queue, or a read-only view of labeled results. Re-annotation
-is a routine check (preference cycles, otherwise a small random sample) or
-pairs where the trained scorer strongly disagrees with the recorded label.
+Open the page, choose a database, then new annotation, one re-annotation
+queue, or a read-only view of labeled results. Each re-annotation batch
+holds at most 40 pairs: model disagreements, then preference-cycle edges,
+then split votes, then other labeled pairs.
 Earlier labels are kept. Back or Escape returns to that menu. Each browser
 stores its own identity, so several people can share one server.
 
@@ -45,6 +45,7 @@ ANNOTATOR_RE = re.compile(r'^[\w\-]{1,32}$', re.UNICODE)
 # A recorded choice is worth another look when the trained scorer assigns the
 # opposite candidate at least this probability. Labels are never overwritten.
 MODEL_DISAGREE = 0.6
+REVIEW_BATCH = 40
 
 PROMPT = (
     'Considering infrared salient targets, visible texture, structural clarity, and artifacts, '
@@ -138,6 +139,8 @@ class AnnotateState:
         self.extras = list(extras or [])
         self.relabel_baselines: dict[str, dict[str, int]] = {}
         self.model_baselines: dict[str, dict[str, int]] = {}
+        self.review_baselines: dict[str, dict[str, int]] = {}
+        self.review_order: dict[str, list[str]] = {}
         self.label_restrict: dict[str, set[str]] = {}
         self.label_note: dict[str, str] = {}
         self.score_lock = threading.Lock()
@@ -181,6 +184,9 @@ class AnnotateState:
 
     def model_pass_path(self, annotator_id: str) -> Path:
         return self.out / 'fit' / f'model_pass_{annotator_id}.json'
+
+    def review_pass_path(self, annotator_id: str) -> Path:
+        return self.out / 'fit' / f'review_pass_{annotator_id}.json'
 
     def _round_counts_locked(self, annotator_id: str) -> Counter:
         rows = load_jsonl(self.labels_path(annotator_id))
@@ -290,15 +296,21 @@ class AnnotateState:
     ) -> dict:
         aid = valid_annotator_id(annotator_id)
         exp = valid_expertise(expertise)
-        if mode not in ('label', 'recheck', 'relabel', 'model'):
-            raise ValueError('mode must be label, recheck, relabel, or model')
-        resume_model = False
-        if mode == 'model':
+        if mode in ('recheck', 'relabel', 'model'):
+            mode = 'review'
+        if mode not in ('label', 'review'):
+            raise ValueError('mode must be label or review')
+        need_queue = False
+        if mode == 'review':
             with self.lock:
-                resume_model = bool(self._pass_remaining(self.model_pass_path(aid), aid))
-        prepared = None
-        if mode == 'model' and not resume_model:
-            prepared = self._disagreement_queue()
+                need_queue = not self._review_remaining_locked(aid)
+        model_ids: list[str] = []
+        if need_queue:
+            try:
+                model_ids, _note = self._disagreement_queue()
+            except Exception as exc:
+                print(f'[annotate] model disagreement queue skipped: {exc}', flush=True)
+                model_ids = []
         with self.lock:
             rows = load_jsonl(self.annotators_path)
             found = False
@@ -315,15 +327,9 @@ class AnnotateState:
                 for row in rows:
                     f.write(json.dumps(row, ensure_ascii=False) + '\n')
             recommendation = None
-            if mode == 'recheck':
-                recommendation = self._enter_recheck_locked(aid)
-                self.user_mode[aid] = 'recheck'
-            elif mode == 'relabel':
-                recommendation = self._enter_relabel_locked(aid)
-                self.user_mode[aid] = 'relabel'
-            elif mode == 'model':
-                recommendation = self._enter_model_locked(aid, prepared)
-                self.user_mode[aid] = 'model'
+            if mode == 'review':
+                recommendation = self._enter_review_locked(aid, model_ids)
+                self.user_mode[aid] = 'review'
             else:
                 if only_task_ids:
                     self.label_restrict[aid] = {str(item) for item in only_task_ids}
@@ -424,6 +430,141 @@ class AnnotateState:
         info = {'pair_ids': labeled, 'n': len(labeled), 'n_remaining': len(left), 'note': note}
         self.recommend_meta = info
         return info
+
+    def _campaign_baseline_locked(self, annotator_id: str) -> dict[str, int]:
+        """Round counts from when ordinary pairs were first offered again.
+
+        A later batch still offers a pair when the model disagrees, the pair
+        sits on a cycle, or the votes themselves disagree. Only pairs outside
+        those reasons are limited to one extra vote.
+        """
+        rounds = self._round_counts_locked(annotator_id)
+        labeled = [p['task_id'] for p in self.pairs if int(rounds.get(p['task_id'], 0)) > 0]
+        path = self.relabel_pass_path(annotator_id)
+        baseline: dict[str, int] = {}
+        if path.is_file():
+            try:
+                prev = json.loads(path.read_text(encoding='utf-8'))
+            except Exception:
+                prev = {}
+            saved = prev.get('baseline_rounds') if isinstance(prev, dict) else None
+            if isinstance(saved, dict):
+                baseline = {str(k): int(v) for k, v in saved.items()}
+        changed = not path.is_file()
+        for pid in labeled:
+            if pid not in baseline:
+                baseline[pid] = int(rounds.get(pid, 0))
+                changed = True
+        if changed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(
+                {'pair_ids': labeled, 'baseline_rounds': baseline},
+                ensure_ascii=False, indent=2,
+            ), encoding='utf-8')
+        return baseline
+
+    def _review_remaining_locked(self, annotator_id: str) -> list[str]:
+        path = self.review_pass_path(annotator_id)
+        if not path.is_file():
+            return []
+        try:
+            prev = json.loads(path.read_text(encoding='utf-8'))
+        except Exception:
+            return []
+        pair_ids = [str(pid) for pid in (prev.get('pair_ids') or [])]
+        saved = prev.get('baseline_rounds')
+        if not pair_ids or not isinstance(saved, dict):
+            return []
+        rounds = self._round_counts_locked(annotator_id)
+        return [
+            pid for pid in pair_ids
+            if int(rounds.get(pid, 0)) <= int(saved.get(pid, saved.get(str(pid), 0)))
+        ]
+
+    def _enter_review_locked(self, annotator_id: str, model_ids: list[str]) -> dict:
+        """One batch of at most REVIEW_BATCH pairs, in priority order."""
+        from pref.qc import order_review_batch, recommend_review, votes_disagree
+
+        path = self.review_pass_path(annotator_id)
+        campaign = self._campaign_baseline_locked(annotator_id)
+        rounds = self._round_counts_locked(annotator_id)
+        remaining = self._review_remaining_locked(annotator_id)
+        if remaining:
+            prev = json.loads(path.read_text(encoding='utf-8'))
+            pair_ids = [str(pid) for pid in prev['pair_ids']]
+            baseline = {str(k): int(v) for k, v in prev['baseline_rounds'].items()}
+            counts = prev.get('counts') or {}
+            note = self._review_count_note(counts)
+        else:
+            self.refresh_supervision()
+            rows = load_jsonl(self.out / 'supervision.jsonl')
+            info = recommend_review(
+                rows, self.pairs, max_queue=10**9, low_r_budget=0,
+            )
+            cycle_ids = info['pair_ids'] if 'cycle' in info.get('reasons', []) else []
+            split_rows = []
+            for row in rows:
+                y = (float(row['y_A']), float(row['y_T']), float(row['y_B']))
+                if votes_disagree(y, int(row.get('n_annotations') or 0)):
+                    split_rows.append((float(row.get('R') or 0), str(row['pair_id'])))
+            split_rows.sort()
+            split_ids = [pid for _, pid in split_rows if pid in self.by_id]
+            reason_ids = {
+                pid for pid in list(model_ids) + list(cycle_ids) + split_ids
+                if pid in self.by_id
+            }
+            other_pairs = [
+                self.by_id[pid] for pid, base in campaign.items()
+                if pid in self.by_id and pid not in reason_ids
+                and int(rounds.get(pid, 0)) <= int(base)
+            ]
+            other_ids = [p['task_id'] for p in spread_by_scene(other_pairs)]
+            ranked = order_review_batch(
+                [pid for pid in model_ids if pid in self.by_id],
+                [pid for pid in cycle_ids if pid in self.by_id],
+                split_ids,
+                other_ids,
+                limit=REVIEW_BATCH,
+            )
+            pair_ids = [pid for pid, _reason in ranked]
+            baseline = {pid: int(rounds.get(pid, 0)) for pid in pair_ids}
+            counts = Counter(reason for _pid, reason in ranked)
+            note = (
+                self._review_count_note(counts)
+                if pair_ids else
+                'No labeled pairs are waiting for another vote.'
+            )
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({
+                'pair_ids': pair_ids,
+                'baseline_rounds': baseline,
+                'counts': dict(counts),
+                'note': note,
+                'batch': REVIEW_BATCH,
+            }, ensure_ascii=False, indent=2), encoding='utf-8')
+            remaining = list(pair_ids)
+        self.review_baselines[annotator_id] = baseline
+        self.review_order[annotator_id] = pair_ids
+        info = {
+            'pair_ids': pair_ids,
+            'n': len(pair_ids),
+            'n_remaining': len(remaining),
+            'reasons': ['review'],
+            'note': note,
+        }
+        self.recommend_meta = info
+        return info
+
+    @staticmethod
+    def _review_count_note(counts: dict) -> str:
+        names = (
+            ('model', 'model disagreements'),
+            ('cycle', 'cycle edges'),
+            ('split', 'split votes'),
+            ('other', 'other labeled pairs'),
+        )
+        parts = [f'{int(counts.get(key) or 0)} {label}' for key, label in names if int(counts.get(key) or 0)]
+        return 'This batch: ' + ', '.join(parts) + '.' if parts else 'This batch is empty.'
 
     def _bind_recheck_pass(
         self,
@@ -851,7 +992,18 @@ class AnnotateState:
         done = {r['task_id'] for r in rows if 'task_id' in r}
         round_counts = Counter(r['task_id'] for r in rows if 'task_id' in r)
         mode = self.user_mode.get(annotator_id, 'reannotate' if self.allow_reannotate else 'normal')
-        if mode in ('relabel', 'model'):
+        if mode == 'review':
+            baseline = self.review_baselines.get(annotator_id, {})
+            by_task = {p['task_id']: p for p in self.pairs}
+            pool = [
+                by_task[tid] for tid in self.review_order.get(annotator_id, [])
+                if tid in by_task
+            ]
+            queue = [
+                p for p in pool
+                if int(round_counts.get(p['task_id'], 0)) <= int(baseline.get(p['task_id'], 0))
+            ]
+        elif mode in ('relabel', 'model'):
             baseline = (
                 self.model_baselines if mode == 'model' else self.relabel_baselines
             ).get(annotator_id, {})
@@ -933,7 +1085,7 @@ class AnnotateState:
             'database': self.db_label,
             'recommend_note': (
                 self.label_note.get(aid, '') if mode == 'normal'
-                else self.recommend_meta.get('note') if mode in ('recheck', 'relabel', 'model')
+                else self.recommend_meta.get('note') if mode in ('recheck', 'relabel', 'model', 'review')
                 else ''
             ),
         }
@@ -1361,8 +1513,7 @@ HTML = r"""<!DOCTYPE html>
 </head>
 <body>
 <header>
-  <strong>IVIF Preference Annotation</strong>
-  <span class="muted" id="meta">Select an annotator</span>
+  <span class="muted" id="meta"></span>
   <div class="bar" title="progress"><i id="pbar"></i></div>
   <span class="muted" id="count">—</span>
   <button type="button" id="switch" hidden>Back</button>
@@ -1398,24 +1549,20 @@ function setProgress(p) {
   const modeName = {
     normal: 'New annotation',
     relabel: 'Re-annotation',
+    review: 'Re-annotation',
     recheck: 'Routine check',
     model: 'Model disagreements',
     reannotate: 'Re-annotation',
   }[p.mode] || '';
-  document.getElementById('meta').textContent =
-    `${p.database || ''} · ${p.annotator} · ${expLabel(p.expertise)} · ${modeName} · ${p.remaining} left`;
+  document.getElementById('meta').textContent = `${p.annotator} · ${modeName}`;
   showBack();
 }
 
 function renderDone(p) {
   setProgress(p);
-  const extra = p.recommend_note ? `<p class="muted">${esc(p.recommend_note)}</p>` : '';
   const title = p.total ? 'This round is complete' : 'Nothing in this queue';
   app.innerHTML = `<div class="done-box">
     <h1>${title}</h1>
-    <p class="muted">${esc(p.annotator)} (${expLabel(p.expertise)}) has finished the current queue.</p>
-    <p class="muted">Raw labels are in ${esc(p.labels_path)}. Closing this program recomputes and saves supervision.jsonl.</p>
-    ${extra}
     <button type="button" id="back-done">Back</button>
   </div>`;
   document.getElementById('back-done').onclick = goBack;
@@ -1424,9 +1571,10 @@ function renderDone(p) {
 function cell(url, title, sub, choice) {
   const cls = choice ? ' choice' : '';
   const click = choice ? ` onclick="submit('${choice}')"` : '';
+  const subHtml = sub ? `<span>${esc(sub)}</span>` : '';
   return `<figure class="${cls.trim()}"${click}>
     <div class="imgwrap"><img src="${url}" alt="${esc(title)}"/></div>
-    <figcaption><span>${esc(title)}</span><span>${esc(sub)}</span></figcaption>
+    <figcaption><span>${esc(title)}</span>${subHtml}</figcaption>
   </figure>`;
 }
 
@@ -1434,23 +1582,18 @@ function renderTask(t) {
   task = t;
   busy = false;
   setProgress(t.progress);
-  const note = t.progress.recommend_note
-    ? `<div class="note">${esc(t.progress.recommend_note)}</div>` : '';
   app.innerHTML = `
-    ${note}
-    <div class="prompt">${esc(t.prompt)}</div>
     <div class="grid4">
-      ${cell(t.ir_url, 'Infrared (IR)', t.dataset + ' · ' + t.scene_id)}
-      ${cell(t.vi_url, 'Visible (VI)', t.split)}
-      ${cell(t.left_url, 'Result A', 'Click or press 1', 'left')}
-      ${cell(t.right_url, 'Result B', 'Click or press 3', 'right')}
+      ${cell(t.ir_url, 'IR', '')}
+      ${cell(t.vi_url, 'VI', '')}
+      ${cell(t.left_url, 'A', '', 'left')}
+      ${cell(t.right_url, 'B', '', 'right')}
     </div>
     <div class="actions">
-      <button type="button" class="primary" id="btn-left">A is better (1)</button>
-      <button type="button" class="tie" id="btn-tie">Tie / about the same (2 / Space)</button>
-      <button type="button" class="primary" id="btn-right">B is better (3)</button>
+      <button type="button" class="primary" id="btn-left">A (1)</button>
+      <button type="button" class="tie" id="btn-tie">Tie (2)</button>
+      <button type="button" class="primary" id="btn-right">B (3)</button>
       <button type="button" id="back-task">Back</button>
-      <span class="hint">Clicking an image selects that side. For a tie, use the yellow button or press 2 / Space. Escape returns to the menu.</span>
     </div>
   `;
   document.getElementById('btn-left').onclick = () => submit('left');
@@ -1521,7 +1664,6 @@ async function renderPrepare(message, readyToAdd) {
   app.innerHTML = `
     <form class="gate" id="prep">
       <h1>New annotation</h1>
-      <p class="muted">Use the folders below only for new scenes or a new method. Comparisons already labeled are kept. If the images are already prepared, go straight to labeling.</p>
       <button class="primary go" type="button" id="prep-continue">Label prepared pairs</button>
       <h2 style="font-size:22px;margin:22px 0 8px">Add images</h2>
       <label>What are you adding?</label>
@@ -1537,14 +1679,12 @@ async function renderPrepare(message, readyToAdd) {
         <input id="add-source" type="text" placeholder="/path/to/dataset"/>
         <label for="add-fusion">Fusion folder, if it is not already set up</label>
         <input id="add-fusion" type="text" placeholder="Optional: one subfolder per method"/>
-        <p class="muted">Infrared and visible images are enough. Reference fusions are built from them, so you do not need several finished projects. A fusion folder is optional: one subfolder per method you do have, files named like the infrared image. Methods you do not have are skipped.</p>
       </div>
       <div id="add-method" hidden>
         <label for="add-method-name">Method name</label>
         <input id="add-method-name" type="text" maxlength="64" placeholder="e.g. emma"/>
         <label for="add-results">Results folder</label>
         <input id="add-results" type="text" placeholder="/path/to/method_results"/>
-        <p class="muted">One method is enough. Name each file like the infrared image. Where a scene has no other fusion, it is compared with reference fusions built from the infrared and visible images. When one filename belongs to more than one dataset, put the files in a subfolder with that dataset's name.</p>
       </div>
       ${message ? `<p class="muted" style="color:#f0b429">${esc(message)}</p>` : ''}
       <button class="go" type="button" id="prep-add">${readyToAdd ? 'Add these images' : 'Check these folders'}</button>
@@ -1630,26 +1770,23 @@ function renderGate(err) {
   app.innerHTML = `
     <form class="gate" id="gate">
       <h1>Choose a task</h1>
-      <p class="muted">Pick the database first. New annotation can keep labeling prepared pairs, or add scenes and methods from folders. View labeled results does not write. Back or Escape returns here.</p>
       <label for="database">Database</label>
       <select id="database">${dbOpts}</select>
-      <label for="who">Existing users</label>
+      <label for="who">User</label>
       <select id="who">
         <option value="">— New user —</option>
         ${opts}
       </select>
-      <label for="newid">Username (new, or confirm after selecting)</label>
+      <label for="newid">Name</label>
       <input id="newid" type="text" maxlength="32" placeholder="e.g. ann0" value="${esc(cur)}" autocomplete="off"/>
       <label>Expertise</label>
       <div class="radios">
         <label><input type="radio" name="exp" value="professional" ${exp !== 'non-professional' ? 'checked' : ''}/> Professional</label>
         <label><input type="radio" name="exp" value="non-professional" ${exp === 'non-professional' ? 'checked' : ''}/> Non-professional</label>
       </div>
-      <p class="muted">Routine check reviews preference-cycle edges first. If there is no cycle, it takes a small set of the least reliable pairs, or a random sample when reliability does not vary. Model disagreements are decisive labels where the trained scorer gives the other candidate probability above 0.6. Earlier labels are kept.</p>
       ${err ? `<p class="muted" style="color:#f0b429">${esc(err)}</p>` : ''}
       <button class="primary go" type="button" id="new-btn">New annotation</button>
-      <button class="go" type="submit" data-mode="recheck">Re-annotate: routine check</button>
-      <button class="go" type="submit" data-mode="model">Re-annotate: model disagreements</button>
+      <button class="go" type="submit" data-mode="review">Re-annotate</button>
       <button class="go" type="button" id="view-btn">View labeled results</button>
     </form>`;
   const who = document.getElementById('who');
@@ -1680,7 +1817,7 @@ function renderGate(err) {
     const mode = (e.submitter && e.submitter.dataset.mode) || 'label';
     const submitter = e.submitter;
     if (submitter) submitter.disabled = true;
-    if (mode === 'model' && submitter) submitter.textContent = 'Scoring with the trained model…';
+    if (mode === 'review' && submitter) submitter.textContent = 'Preparing the queue…';
     try {
       const r = await fetch('/api/session', {
         method: 'POST',
@@ -1816,8 +1953,7 @@ function paintView() {
   if (!n) { host.innerHTML = '<div class="prompt">No labeled pairs match these filters.</div>'; return; }
   const it = viewList[viewPos];
   const got = verdictOf(it);
-  const word = got === 'A' ? 'A is better' : got === 'B' ? 'B is better' : 'Tie or close';
-  const subset = it.protocol === 'e1' ? 'Seen methods (E1)' : it.protocol === 'e2' ? 'Unseen methods (E2)' : it.split;
+  const word = got === 'A' ? 'A' : got === 'B' ? 'B' : 'Tie';
   const pack = document.getElementById('vpack').value;
   const cell = (side, title, sub, cls) => `<figure class="${cls}"><div class="imgwrap"><img src="/labeled-img/${it.i}/${side}?pack=${encodeURIComponent(pack)}" alt="${esc(title)}"/></div><figcaption><span>${esc(title)}</span><span>${esc(sub)}</span></figcaption></figure>`;
   const aCls = got === 'A' ? 'win' : got === 'B' ? 'lose' : 'tie';
@@ -1825,16 +1961,12 @@ function paintView() {
   const aMark = got === 'A' ? 'Selected' : got === 'T' ? 'Tie' : '';
   const bMark = got === 'B' ? 'Selected' : got === 'T' ? 'Tie' : '';
   host.innerHTML = `
-    <div class="prompt"><b class="${got}">${word}</b>
-      · q=${it.q.toFixed(2)} · y=(${it.y_A}, ${it.y_T}, ${it.y_B})
-      · ${esc(it.dataset)} / ${esc(subset)} · ${esc(it.scene_id)}
-      · ${esc(it.pair_id)}
-      <span class="muted"> · A and B are the stored candidates, not the left/right order used while annotating. Re-annotate this pair adds one vote. Earlier votes stay and are counted together.</span></div>
+    <div class="prompt"><b class="${got}">${word}</b></div>
     <div class="grid4">
-      ${cell('ir', 'Infrared (IR)', it.scene_id, '')}
-      ${cell('vi', 'Visible (VI)', subset, '')}
-      ${cell('a', 'Candidate A · ' + methodName(it.candidate_a), aMark, aCls)}
-      ${cell('b', 'Candidate B · ' + methodName(it.candidate_b), bMark, bCls)}
+      ${cell('ir', 'IR', '', '')}
+      ${cell('vi', 'VI', '', '')}
+      ${cell('a', 'A · ' + methodName(it.candidate_a), aMark, aCls)}
+      ${cell('b', 'B · ' + methodName(it.candidate_b), bMark, bCls)}
     </div>`;
   writeViewPlace();
   renderCorrect();
@@ -1866,9 +1998,8 @@ function renderCorrect() {
   const only = Object.keys(it.counts || {});
   const chosen = ids.has(wanted) ? wanted : (only.length === 1 ? only[0] : (session && ids.has(session.annotator_id) ? session.annotator_id : [...ids][0] || ''));
   const options = [...ids].sort().map(id => `<option value="${esc(id)}"${id === chosen ? ' selected' : ''}>${esc(id)}</option>`).join('');
-  const effect = 'Saving adds one vote on this pair. Earlier votes stay in the total.';
   box.innerHTML = `
-    <p>${esc(voteSummary(it))}. ${effect}${correctNote ? ' ' + esc(correctNote) : ''}</p>
+    <p>${esc(voteSummary(it))}${correctNote ? '. ' + esc(correctNote) : ''}</p>
     <select id="vfix-user">${options}</select>
     <button type="button" id="vfix-a">A is better</button>
     <button type="button" id="vfix-t">Tie</button>
@@ -1978,7 +2109,6 @@ async function startView() {
       <button type="button" class="jump" id="vfwd10">+10</button>
       <button type="button" id="vrand">Random</button>
       <button type="button" id="vcorrect">Re-annotate this pair</button>
-      <span class="muted">Arrows ±1 · Shift+arrows ±5 · Page Up/Down ±10</span>
     </div>
     <div id="vfix" class="vfix" hidden></div>
     <div id="view-host"></div>`;
@@ -2449,9 +2579,9 @@ def main() -> None:
     print(f'[annotate] reannotate={args.allow_reannotate}')
     print(f'[annotate] http://127.0.0.1:{args.port}/')
     print(f'[annotate] Cursor Ports → Forward {args.port}')
-    print('[annotate] choose a database, then new annotation, a recommended review, or view')
+    print('[annotate] choose a database, then New annotation, Re-annotate, or View labeled results')
     print('[annotate] labeling keys: 1=A, 2/Space=tie, 3=B; Escape=back; view keys: Left/Right ±1, Shift+arrows ±5, Page Up/Down ±10, R=random')
-    print('[annotate] Closing the browser tab does not stop the server. Aggregation runs once on exit.')
+    print('[annotate] Closing the browser tab stops the server after a few seconds. Submitted votes are already saved.')
 
     httpd = ThreadingHTTPServer(('0.0.0.0', args.port), make_handler(hub))
     primary.httpd = httpd

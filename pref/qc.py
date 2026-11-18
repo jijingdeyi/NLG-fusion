@@ -114,6 +114,41 @@ def detect_cycles(
     return cycles
 
 
+def votes_disagree(y: tuple[float, float, float], n_annotations: int) -> bool:
+    """True when at least two votes landed on different choices."""
+    if int(n_annotations) < 2:
+        return False
+    return sum(float(part) > 1e-9 for part in y) >= 2
+
+
+def order_review_batch(
+    model_ids: Sequence[str],
+    cycle_ids: Sequence[str],
+    split_ids: Sequence[str],
+    other_ids: Sequence[str],
+    limit: int = 40,
+) -> list[tuple[str, str]]:
+    """One capped queue. Earlier tiers occupy slots before later tiers."""
+    if limit <= 0:
+        raise ValueError('limit must be positive')
+    chosen: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for reason, ids in (
+        ('model', model_ids),
+        ('cycle', cycle_ids),
+        ('split', split_ids),
+        ('other', other_ids),
+    ):
+        for pid in ids:
+            if pid in seen:
+                continue
+            seen.add(pid)
+            chosen.append((pid, reason))
+            if len(chosen) >= limit:
+                return chosen
+    return chosen
+
+
 def conflict_pairs(
     supervision_rows: Sequence[dict],
     model_probs: Mapping[str, tuple[float, float, float]],
