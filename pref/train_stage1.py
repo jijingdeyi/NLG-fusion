@@ -1,7 +1,8 @@
-"""Train the baseline scorer on vote-share preferences.
+"""Train a scorer on vote-share preferences.
 
-The model reads infrared as gray and visible and fusion as Y, Cb, Cr, then
-scores a 224 view of the whole image together with a complete cover of tiles.
+The default model is the region baseline: infrared is gray, visible and fusion
+are Y, Cb, Cr, and the native-resolution feature map yields a region score
+plus a whole-image score.
 """
 
 from __future__ import annotations
@@ -18,6 +19,8 @@ from pref.dataset import BaselinePairDataset, baseline_collate, make_scene_loade
 from pref.graph import connectivity_report
 from pref.io import export_supervision_jsonl, load_jsonl, load_yaml, resolve_pack_paths
 from pref.model.baseline import BaselineScorer
+from pref.model.feature_scorer import FeatureScorer
+from pref.model.region_scorer import RegionScorer
 
 
 def set_seed(seed: int) -> None:
@@ -133,12 +136,25 @@ def _pair_blocked_by_holdout(row: dict, method: str) -> bool:
     return bool(pair_candidate_ids(row) & holdout_blocked_candidates(method))
 
 
+def _make_scorer(model_name: str, *, pretrained: bool, size: int):
+    if model_name == 'baseline':
+        if size != 224:
+            raise SystemExit('The global view and the tile size stay 224.')
+        return BaselineScorer(pretrained=pretrained, global_size=size, tile_size=size), 'baseline_ycbcr_tiles'
+    if model_name == 'region':
+        return RegionScorer(pretrained=pretrained), 'region_ycbcr'
+    if model_name == 'feature':
+        return FeatureScorer(pretrained=pretrained), 'feature_ycbcr'
+    raise SystemExit('model_name must be baseline, region, or feature')
+
+
 def train_scorer_stage1(
     out_root: Path | str,
     cfg_path: Path | str | None = None,
     device: str = 'cuda:0',
-    epochs: int = 20,
-    freeze_epochs: int = 4,
+    epochs: int = 100,
+    freeze_epochs: int = 10,
+    patience: int = 20,
     batch_size: int = 16,
     lr_head: float = 1e-4,
     lr_backbone: float = 1e-5,
@@ -155,6 +171,7 @@ def train_scorer_stage1(
     matched_train_size: int | None = None,
     run_tag: str | None = None,
     refresh_supervision: bool = False,
+    model_name: str = 'region',
 ) -> dict:
     out = Path(out_root)
     cfg = load_yaml(cfg_path) if cfg_path else {}
@@ -180,7 +197,6 @@ def train_scorer_stage1(
         blocked = holdout_blocked_candidates(holdout_method)
         before_tr, before_va = len(train_rows), len(val_rows)
         train_rows = [r for r in train_rows if not _pair_blocked_by_holdout(r, holdout_method)]
-        # Checkpoint selection must not see M (or its derivatives) either.
         val_rows = [r for r in val_rows if not _pair_blocked_by_holdout(r, holdout_method)]
         print(
             f'[stage1] holdout_method={holdout_method} blocked={sorted(blocked)}: '
@@ -189,7 +205,6 @@ def train_scorer_stage1(
             flush=True,
         )
     elif matched_train_size is not None:
-        # Size-matched control: random train subsample; M still allowed.
         n_keep = int(matched_train_size)
         if n_keep < len(train_rows):
             rng = random.Random(int(cfg.get('seed', seed)))
@@ -209,7 +224,7 @@ def train_scorer_stage1(
         f'lomo_{holdout_method}' if holdout_method else
         (
             f'matched_n{matched_train_size}' if matched_train_size is not None else
-            (f'in_{input_mode}' if input_mode != 'ir_vis_f' else 'baseline')
+            (f'in_{input_mode}' if input_mode != 'ir_vis_f' else model_name)
         )
     )
 
@@ -227,10 +242,8 @@ def train_scorer_stage1(
 
     if input_mode != 'ir_vis_f':
         raise SystemExit(
-            'The baseline reads infrared as gray and visible and fusion as Y, Cb, Cr.'
+            'The scorer reads infrared as gray and visible and fusion as Y, Cb, Cr.'
         )
-    if size != 224:
-        raise SystemExit('The global view and the tile size stay 224.')
     train_ds = BaselinePairDataset(
         train_rows, size=size, augment=True, exclude_gold=True, exclude_control=False,
     )
@@ -249,7 +262,8 @@ def train_scorer_stage1(
         collate_fn=baseline_collate,
     )
 
-    model = BaselineScorer(pretrained=pretrained, global_size=size, tile_size=size).to(device)
+    model, arch = _make_scorer(model_name, pretrained=pretrained, size=size)
+    model = model.to(device)
     opt = _build_optimizer(
         model, lr_head=lr_head, lr_backbone=lr_backbone,
         weight_decay=weight_decay, backbone_trainable=False,
@@ -264,6 +278,8 @@ def train_scorer_stage1(
     best = {'val_loss': float('inf'), 'epoch': -1}
     history = []
     backbone_on = False
+    stall = 0
+    stopped_early = False
 
     for epoch in range(1, epochs + 1):
         if (not backbone_on) and epoch > freeze_epochs:
@@ -318,7 +334,7 @@ def train_scorer_stage1(
             'epoch': epoch,
             'model': model.state_dict(),
             'stage': 1,
-            'arch': 'baseline_ycbcr_tiles',
+            'arch': arch,
             'tau': tau,
             'size': size,
             'pretrained': pretrained,
@@ -328,7 +344,8 @@ def train_scorer_stage1(
             'run_tag': tag,
         }
         torch.save(ckpt, last_path)
-        if val_stats['n'] == 0 or val_stats['loss'] <= best['val_loss']:
+        improved = val_stats['n'] == 0 or val_stats['loss'] < best['val_loss']
+        if improved:
             best = {
                 'val_loss': val_stats['loss'],
                 'epoch': epoch,
@@ -336,8 +353,37 @@ def train_scorer_stage1(
                 'val_acc_decisive': val_stats['acc_decisive'],
             }
             torch.save(ckpt, best_path)
+            stall = 0
+        else:
+            stall += 1
+        report = _report(
+            superv_path, tag, input_mode, holdout_method, matched_train_size,
+            train_ds, val_ds, best_path, best, history, epochs, freeze_epochs,
+            patience, batch_size, lr_head, lr_backbone, size, tau,
+            control_downweight, arch, stopped_early,
+        )
+        report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+        if epoch >= freeze_epochs and stall >= patience:
+            stopped_early = True
+            report['stopped_early'] = True
+            report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
+            print(
+                f'[stage1:{tag}] stop at epoch {epoch}: '
+                f'val loss did not fall for {patience} epochs',
+                flush=True,
+            )
+            break
 
-    report = {
+    return report
+
+
+def _report(
+    superv_path, tag, input_mode, holdout_method, matched_train_size,
+    train_ds, val_ds, best_path, best, history, epochs, freeze_epochs,
+    patience, batch_size, lr_head, lr_backbone, size, tau,
+    control_downweight, arch, stopped_early,
+) -> dict:
+    return {
         'supervision': str(superv_path),
         'run_tag': tag,
         'input_mode': input_mode,
@@ -351,18 +397,19 @@ def train_scorer_stage1(
         'hparams': {
             'epochs': epochs,
             'freeze_epochs': freeze_epochs,
+            'patience': patience,
             'batch_size': batch_size,
             'lr_head': lr_head,
             'lr_backbone': lr_backbone,
             'size': size,
             'tau': tau,
             'target': 'vote_share',
-            'model': 'baseline_ycbcr_tiles',
+            'model': arch,
+            'stopped_early': stopped_early,
             'control_downweight': control_downweight,
             'input_mode': input_mode,
             'holdout_method': holdout_method,
             'matched_train_size': matched_train_size,
         },
+        'stopped_early': stopped_early,
     }
-    report_path.write_text(json.dumps(report, indent=2), encoding='utf-8')
-    return report

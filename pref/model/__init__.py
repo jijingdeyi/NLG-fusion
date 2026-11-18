@@ -7,10 +7,14 @@ from pref.model.loss import (
 )
 from pref.model.preference import preference_distribution, preference_probs
 from pref.model.baseline import BaselineScorer
+from pref.model.feature_scorer import FeatureScorer
+from pref.model.region_scorer import RegionScorer
 from pref.model.resnet_scorer import ResNet18ScalarScorer
 
 __all__ = [
     'BaselineScorer',
+    'FeatureScorer',
+    'RegionScorer',
     'ResNet18ScalarScorer',
     'preference_distribution',
     'preference_probs',

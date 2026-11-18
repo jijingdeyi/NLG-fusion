@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Train the baseline scorer: YCbCr color, full tile cover, vote-share target.
+"""Train the region baseline on the vote-share target.
 
-  CUDA_VISIBLE_DEVICES=0 python scripts/pref_bench/train_scorer_stage1.py \\
+  python scripts/pref_bench/train_scorer_stage1.py \\
       --config /path/to/pref_bench/config.yaml --gpu 0
 """
 
@@ -37,8 +37,10 @@ def main() -> None:
     ap = ArgumentParser(description=__doc__)
     ap.add_argument('--config', type=Path, required=True)
     ap.add_argument('--gpu', default='0')
-    ap.add_argument('--epochs', type=int, default=20)
-    ap.add_argument('--freeze-epochs', type=int, default=4)
+    ap.add_argument('--model', default='region', choices=['region', 'baseline', 'feature'])
+    ap.add_argument('--epochs', type=int, default=100)
+    ap.add_argument('--freeze-epochs', type=int, default=10)
+    ap.add_argument('--patience', type=int, default=20)
     ap.add_argument('--batch-size', type=int, default=16)
     ap.add_argument('--lr-head', type=float, default=1e-4)
     ap.add_argument('--lr-backbone', type=float, default=1e-5)
@@ -71,6 +73,8 @@ def main() -> None:
         device=device,
         epochs=args.epochs,
         freeze_epochs=args.freeze_epochs,
+        patience=args.patience,
+        model_name=args.model,
         batch_size=args.batch_size,
         lr_head=args.lr_head,
         lr_backbone=args.lr_backbone,

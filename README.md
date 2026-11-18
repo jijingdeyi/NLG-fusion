@@ -7,7 +7,7 @@ Score an infrared–visible fusion from human pairwise preferences:
 The repository has two pieces:
 
 - [`hpfm/`](hpfm/) is the released scorer you can install and call. Its weights are the published grayscale model: infrared, visible, and fusion are resized together to 224 and scored by one ResNet-18.
-- [`pref/`](pref/) and [`scripts/pref_bench/`](scripts/pref_bench/) build a preference database, collect labels in a browser, and train the current baseline. That baseline keeps the vote-share target and adds two input changes: visible and fusion are read as Y, Cb, Cr, and the network sees both a 224 view of the whole image and a complete cover of 224 tiles. Overlapping tiles split the shared area by how many tiles cover each pixel. The released `hpfm` weights are not this baseline; training writes a separate checkpoint.
+- [`pref/`](pref/) and [`scripts/pref_bench/`](scripts/pref_bench/) build a preference database, collect labels in a browser, and train the current baseline. Infrared stays gray. Visible and fusion are Y, Cb, Cr, with Y taken from the grayscale image. The network keeps the native resolution. Each cell of an intermediate feature map scores one region; the last stages score the whole image. Those two scores are added with learned weights. The loss is the vote share. The released `hpfm` weights are the older grayscale model, not this baseline.
 
 ## Setup
 
@@ -111,7 +111,9 @@ CUDA_VISIBLE_DEVICES=0 python scripts/pref_bench/train_scorer_stage1.py \
   --gpu 0
 ```
 
-The run reads native images. Infrared stays gray. Visible and fusion are Y, Cb, Cr, with Y taken from the grayscale image. The network scores a 224 view of the whole image and every 224 tile; edge tiles overlap so the cover has no blank border. The loss is the vote share above. The best checkpoint is `{out_root}/fit/scorer_baseline_best.pt`. It does not replace `checkpoints/scorer_stage1_best.pt` or the weights inside `hpfm`.
+The default run trains the region baseline. Infrared stays gray. Visible and fusion are Y, Cb, Cr, with Y taken from the grayscale image. The image is not resized to a fixed square: the feature map follows the native size, each spatial cell gets a score, and those scores are averaged. The last stages pool to one whole-image score. The two scores are added with learned weights that start at one half. The loss is the vote share above. The best checkpoint is `{out_root}/fit/scorer_region_best.pt`. It does not replace `checkpoints/scorer_stage1_best.pt` or the weights inside `hpfm`.
+
+`--model baseline` trains the earlier tile model, and `--model feature` trains channel weighting. Those are comparisons, not the default.
 
 The annotator’s model-disagreement queue still uses the released grayscale checkpoint. It reads `scorer_ckpt` from the config when that key is set, and otherwise `checkpoints/scorer_stage1_best.pt`.
 
